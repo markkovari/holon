@@ -38,6 +38,8 @@ pub struct Config {
     pub agentd: Option<AgentdConfig>,
     /// Where API keys are kept; without it the runtime has none to manage.
     pub platform: Option<crate::keys::Platform>,
+    /// Where `propose_pr` opens pull requests; without it the tool refuses.
+    pub pr: Option<crate::pr::Forge>,
 }
 
 impl Config {
@@ -54,6 +56,7 @@ impl Config {
             embed_service: String::new(),
             agentd: None,
             platform: None,
+            pr: None,
         }
     }
 }
@@ -1420,6 +1423,40 @@ impl Host for Runtime {
             self.store.put(&spec)?;
         }
         Ok(said)
+    }
+
+    fn propose_pr(
+        &self,
+        agent: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let forge =
+            self.cfg.pr.as_ref().ok_or(
+                "proposing pull requests is not set up here (the runtime has no --pr-repo)",
+            )?;
+        let s = |k: &str| args.get(k).and_then(serde_json::Value::as_str).unwrap_or("").trim();
+        let mut files: Vec<(String, Vec<u8>)> = args
+            .get("changes")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|c| {
+                let f = |k: &str| c.get(k).and_then(serde_json::Value::as_str).unwrap_or("");
+                (f("path").to_string(), f("content").as_bytes().to_vec())
+            })
+            .collect();
+        if !s("tool").is_empty() {
+            files.extend(crate::pr::tool_files(&self.store.forge_dir(), agent, s("tool"))?);
+        }
+        let proposal = crate::pr::Proposal {
+            agent: agent.to_string(),
+            branch: s("branch").to_string(),
+            base: if s("base").is_empty() { "main".into() } else { s("base").to_string() },
+            title: s("title").to_string(),
+            body: format!("{}\n\nProposed by agent `{agent}`.", s("body")),
+            files,
+        };
+        crate::pr::open(forge, &self.cfg.state_dir.join("pr"), &proposal)
     }
 
     fn jev(&self) -> Option<&dyn crate::jev::Jev> {

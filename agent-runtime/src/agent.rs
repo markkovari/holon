@@ -169,6 +169,10 @@ pub trait Host: Sync {
     fn build_tool(&self, _agent: &str, _args: &Value) -> Result<String, String> {
         Err("building tools is not available here".into())
     }
+    /// `propose_pr`: opens a real pull request (`crate::pr`) and answers what the forge said.
+    fn propose_pr(&self, _agent: &str, _args: &Value) -> Result<Value, String> {
+        Err("proposing pull requests is not set up here (the runtime has no --pr-repo)".into())
+    }
     /// Jev, for reading pictures, when this host has a key for it.
     fn jev(&self) -> Option<&dyn crate::jev::Jev> {
         None
@@ -643,8 +647,8 @@ pub const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "propose_pr",
-        args: r#"{"branch": "feat/my-change", "title": "...", "body": "...", "base": "main", "message": "...", "changes": [{"path": "...", "content": "..."}]}"#,
-        about: "Propose a Pull Request to git forge with file changes and record PR provenance in the knowledge graph. If `changes` is omitted, commits workspace modifications.",
+        args: r#"{"branch": "tool/my-tool", "title": "...", "body": "...", "base": "main", "changes": [{"path": "...", "content": "..."}], "tool": "a tool you built"}"#,
+        about: "Open a real pull request: a branch with these files (`changes`, and with `tool` the whole component of a tool you built with tool_build, as components/<tool>-mbt), pushed and opened. Answers its URL.",
         category: "forge",
         sensitive: true,
     },
@@ -2322,40 +2326,15 @@ fn exec(
             Ok(serde_json::to_string_pretty(&res).unwrap_or_default())
         }
         "propose_pr" => {
-            let branch = arg(args, "branch");
-            let title = arg(args, "title");
-            let body = arg(args, "body");
-            let base =
-                if arg(args, "base").is_empty() { "main".to_string() } else { arg(args, "base") };
-
-            let pr_num = (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() % 10000)
-                .unwrap_or(42)) as u32;
-
-            let commit_sha = format!("{:016x}", pr_num as u64 * 0xdeadbeef);
-            let pr_url = format!("https://github.com/markkovari/holon/pull/{pr_num}");
-
-            let rec = json!({
-                "number": pr_num,
-                "url": pr_url,
-                "commit": commit_sha,
-                "branch": branch,
-                "base": base,
-                "title": title,
-                "body": body,
-                "author_agent": spec.name,
-                "status": "opened"
-            });
+            let rec = host.propose_pr(&spec.name, args)?;
             let _ = host.kv_put(
                 &spec.name,
                 "pr_provenance",
-                &format!("pr:{pr_num}"),
+                &format!("pr:{}", rec["number"].as_u64().unwrap_or_default()),
                 &rec.to_string(),
                 None,
                 cause,
             );
-
             Ok(serde_json::to_string_pretty(&rec).unwrap_or_default())
         }
         "tool_build" => host.build_tool(&spec.name, args),

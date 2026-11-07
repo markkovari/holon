@@ -14,6 +14,7 @@ pub mod kv;
 pub mod lazy;
 pub mod model;
 pub mod otlp;
+pub mod pr;
 pub mod projects;
 pub mod runtime;
 pub mod server;
