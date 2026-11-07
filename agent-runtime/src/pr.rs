@@ -150,7 +150,10 @@ fn collect(
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        if name == "_build" || name == "target" || name == ".mooncakes" {
+        if name == "_build" || name == "target" || name == ".mooncakes" || name == "text" {
+            continue;
+        }
+        if name.ends_with(".wasm") || (dir == root && name == "tool.mbt") {
             continue;
         }
         if path.is_dir() {

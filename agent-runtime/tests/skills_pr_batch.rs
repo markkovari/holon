@@ -368,6 +368,10 @@ fn a_built_tool_is_proposed_as_its_whole_component() {
         ("moon.mod", "{}"),
         ("wit/world.wit", "w"),
         ("_build/x.wasm", "x"),
+        ("embedded.wasm", "embedded"),
+        ("tool.wasm", "component"),
+        ("text/text.mbt", "legacy"),
+        ("tool.mbt", "stray root"),
     ] {
         std::fs::create_dir_all(work.join(p).parent().unwrap()).unwrap();
         std::fs::write(work.join(p), c).unwrap();
@@ -375,7 +379,7 @@ fn a_built_tool_is_proposed_as_its_whole_component() {
     let mut a = agent_with_replies(
         "helper",
         &[
-            r#"{"tool": "propose_pr", "args": {"branch": "tool/prime-count", "title": "feat(tools): prime_count", "tool": "prime_count"}}"#,
+            r#"{"tool": "propose_pr", "args": {"branch": "tool/prime-count", "title": "feat(tools): prime_count", "tool": "prime_count", "changes": [{"path": "components/prime-count-mbt/tool.mbt", "content": "hallucinated"}]}}"#,
             "proposed",
         ],
     );
@@ -392,4 +396,16 @@ fn a_built_tool_is_proposed_as_its_whole_component() {
     assert_eq!(at("components/prime-count-mbt/tool/tool.mbt"), "pub fn call() {}");
     assert_eq!(at("components/prime-count-mbt/wit/world.wit"), "w");
     assert_eq!(at("components/prime-count-mbt/_build/x.wasm"), "", "build output is not proposed");
+    assert_eq!(
+        at("components/prime-count-mbt/embedded.wasm"),
+        "",
+        "wasm artifacts are not proposed"
+    );
+    assert_eq!(at("components/prime-count-mbt/tool.wasm"), "", "wasm artifacts are not proposed");
+    assert_eq!(at("components/prime-count-mbt/text/text.mbt"), "", "text package is not proposed");
+    assert_eq!(
+        at("components/prime-count-mbt/tool.mbt"),
+        "",
+        "stray root tool.mbt is not proposed"
+    );
 }

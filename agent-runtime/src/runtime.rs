@@ -1446,7 +1446,10 @@ impl Host for Runtime {
             })
             .collect();
         if !s("tool").is_empty() {
-            files.extend(crate::pr::tool_files(&self.store.forge_dir(), agent, s("tool"))?);
+            let tool = s("tool");
+            let comp_prefix = format!("components/{}-mbt/", tool.replace('_', "-"));
+            files.retain(|(p, _)| !p.starts_with(&comp_prefix));
+            files.extend(crate::pr::tool_files(&self.store.forge_dir(), agent, tool)?);
         }
         let proposal = crate::pr::Proposal {
             agent: agent.to_string(),

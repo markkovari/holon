@@ -20,7 +20,7 @@ Copy this directory to `components/<name>-mbt`, rename the world in `wit/world.w
 | File | Who writes it |
 |---|---|
 | `tool/tool.mbt` | the tool's author |
-| `tool/json.mbt`, `text/`, `gen/**/impl.mbt`, `gen/**/moon.pkg` | fixed, by hand |
+| `tool/json.mbt`, `gen/**/impl.mbt`, `gen/**/moon.pkg` | fixed, by hand |
 | everything else | `wit-bindgen moonbit` 0.63 (0.58 panics on the p3 world) |
 
 Regenerating the bindings rewrites `gen/**/moon.pkg`; put the hand-written ones back after it.
@@ -29,8 +29,7 @@ Regenerating the bindings rewrites `gen/**/moon.pkg`; put the hand-written ones 
 
 A MoonBit `String` is UTF-16, so the component is embedded with `--encoding utf16`, and:
 
-- `String::to_bytes()` is UTF-16LE. For UTF-8 use `@text.utf8`.
-- `length()` counts UTF-16 units. Cutting by it can split an emoji, and an unpaired surrogate
-  cannot leave the component: over wRPC the host refuses the result, and `@utf8.encode` aborts.
-  Use `@text.take_chars`. `tool/json.mbt` repairs whatever a tool returns (U+FFFD for a half
-  character), so a slip costs one character, not the call.
+- `String::to_bytes()` is UTF-16LE. For UTF-8 use `@tool.utf8`.
+- Cutting by `length()` can split an emoji, and an unpaired surrogate cannot leave the component:
+  over wRPC the host refuses the result, and `@utf8.encode` aborts. `tool/json.mbt` repairs whatever
+  a tool returns (U+FFFD for a half character), so a slip costs one character, not the call.

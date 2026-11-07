@@ -2,7 +2,6 @@ import {
   "holon/text-stats/async-core",
   "holon/text-stats/interface/wasi/http/types",
   "holon/text-stats/tool",
-  "holon/text-stats/text",
   "moonbitlang/core/encoding/utf8",
 }
 

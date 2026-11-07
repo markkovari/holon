@@ -61,6 +61,7 @@ pub fn build(
     let work = work_root.join(format!("{agent}-{name}"));
     let _ = std::fs::remove_dir_all(&work);
     copy_tree(Path::new(&template), &work).map_err(|e| format!("copying the template: {e}"))?;
+    customize_template(&work, &name)?;
     std::fs::write(work.join("tool/tool.mbt"), source).map_err(|e| e.to_string())?;
     let wasm = compile(&work)?;
     let build_ms = t0.elapsed().as_millis();
@@ -115,7 +116,7 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let name = entry.file_name();
-        if matches!(name.to_str(), Some("_build" | ".mooncakes" | "target")) {
+        if matches!(name.to_str(), Some("_build" | ".mooncakes" | "target" | "text")) {
             continue;
         }
         let path = entry.path();
@@ -123,6 +124,61 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
             copy_tree(&path, &to.join(&name))?;
         } else {
             std::fs::copy(&path, to.join(&name))?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn customize_template(work: &Path, name: &str) -> Result<(), String> {
+    let slug = name.replace('_', "-");
+    let mod_path = work.join("moon.mod");
+    if let Ok(content) = std::fs::read_to_string(&mod_path) {
+        let updated = content.replace("holon/text-stats", &format!("holon/{slug}"));
+        std::fs::write(&mod_path, updated).map_err(|e| format!("moon.mod: {e}"))?;
+    }
+    let wit_path = work.join("wit/world.wit");
+    if let Ok(content) = std::fs::read_to_string(&wit_path) {
+        let updated = content
+            .replace("package holon:text-stats@0.1.0;", &format!("package holon:{slug}@0.1.0;"))
+            .replace("world text-stats {", &format!("world {slug} {{"));
+        std::fs::write(&wit_path, updated).map_err(|e| format!("wit/world.wit: {e}"))?;
+    }
+    let old_world = work.join("world/text-stats");
+    let new_world = work.join(format!("world/{slug}"));
+    if old_world.exists() && old_world != new_world {
+        std::fs::rename(&old_world, &new_world).map_err(|e| format!("rename world dir: {e}"))?;
+    }
+    rewrite_moon_pkgs(work, &slug).map_err(|e| format!("moon.pkg rewrites: {e}"))?;
+    let _ = std::fs::remove_dir_all(work.join("text"));
+    let _ = std::fs::remove_file(work.join("tool.mbt"));
+    let readme = format!(
+        "# {slug} (MoonBit)\n\n\
+        An agent tool as a component: `holon:tool/tool.call` (`wit/tool/tool.wit`) for an agent-runtime\n\
+        connector's `wrpc`, and `wasi:http/handler` (p3) for its `url`. Both take a JSON object of arguments\n\
+        and answer JSON, or an error the model reads.\n\n\
+        ```bash\n\
+        tools/build-polyglot.sh mbt {slug}\n\
+        ```\n"
+    );
+    let _ = std::fs::write(work.join("README.md"), readme);
+    Ok(())
+}
+
+fn rewrite_moon_pkgs(dir: &Path, slug: &str) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !matches!(name, "_build" | "target" | ".mooncakes") {
+                rewrite_moon_pkgs(&path, slug)?;
+            }
+        } else if path.file_name().and_then(|n| n.to_str()) == Some("moon.pkg") {
+            let content = std::fs::read_to_string(&path)?;
+            if content.contains("holon/text-stats") {
+                let updated = content.replace("holon/text-stats", &format!("holon/{slug}"));
+                std::fs::write(&path, updated)?;
+            }
         }
     }
     Ok(())
@@ -188,7 +244,10 @@ fn compile(work: &Path) -> Result<Vec<u8>, String> {
         &p(&embedded),
     ])?;
     run(&["component", "new", &p(&embedded), "-o", &p(&component)])?;
-    std::fs::read(&component).map_err(|e| e.to_string())
+    let bytes = std::fs::read(&component).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&embedded);
+    let _ = std::fs::remove_file(&component);
+    Ok(bytes)
 }
 
 /// The compiler's errors, without its warnings about the generated bindings.
@@ -272,5 +331,53 @@ mod tests {
         std::env::set_var("HOLON_FORGE_NODE", "n1");
         let err = build(d.path(), d.path(), "a", &json!({"name": "calc", "source": ""}));
         assert!(err.err().unwrap().contains("already exists"));
+    }
+
+    #[test]
+    fn template_customization_renames_project_and_prunes_leftovers() {
+        let d = tempfile::tempdir().unwrap();
+        let work = d.path();
+        std::fs::write(
+            work.join("moon.mod"),
+            "name = \"holon/text-stats\"\npreferred_target = \"wasm\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(work.join("wit")).unwrap();
+        std::fs::write(
+            work.join("wit/world.wit"),
+            "package holon:text-stats@0.1.0;\n\nworld text-stats {\n    export holon:tool/tool@0.1.0;\n}\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(work.join("world/text-stats")).unwrap();
+        std::fs::write(work.join("world/text-stats/moon.pkg"), "warnings = \"-44\"\n").unwrap();
+        std::fs::create_dir_all(work.join("gen")).unwrap();
+        std::fs::write(work.join("gen/moon.pkg"), "import {\n  \"holon/text-stats/tool\",\n}\n")
+            .unwrap();
+        std::fs::create_dir_all(work.join("text")).unwrap();
+        std::fs::write(work.join("text/text.mbt"), "old text").unwrap();
+        std::fs::write(work.join("tool.mbt"), "stray root tool").unwrap();
+
+        customize_template(work, "prime_count").unwrap();
+
+        let moon_mod = std::fs::read_to_string(work.join("moon.mod")).unwrap();
+        assert!(moon_mod.contains("name = \"holon/prime-count\""));
+        assert!(!moon_mod.contains("text-stats"));
+
+        let world_wit = std::fs::read_to_string(work.join("wit/world.wit")).unwrap();
+        assert!(world_wit.contains("package holon:prime-count@0.1.0;"));
+        assert!(world_wit.contains("world prime-count {"));
+
+        assert!(work.join("world/prime-count/moon.pkg").exists());
+        assert!(!work.join("world/text-stats").exists());
+
+        let gen_pkg = std::fs::read_to_string(work.join("gen/moon.pkg")).unwrap();
+        assert!(gen_pkg.contains("holon/prime-count/tool"));
+        assert!(!gen_pkg.contains("text-stats"));
+
+        assert!(!work.join("text").exists(), "text/ leftover is removed");
+        assert!(!work.join("tool.mbt").exists(), "stray root tool.mbt is removed");
+
+        let readme = std::fs::read_to_string(work.join("README.md")).unwrap();
+        assert!(readme.starts_with("# prime-count (MoonBit)"));
     }
 }
