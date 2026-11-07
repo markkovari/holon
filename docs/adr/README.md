@@ -165,6 +165,7 @@ tells you what is true now rather than what was once believed.
 | [0133](0133-a-socket-to-what-egress-names.md) | A socket to what egress names: a guest may TCP-connect to an address its egress allows (port named, address checked), no bind or UDP; `mail-http` speaks SMTP itself and `comp-mailrelay` is deleted | **accepted** |
 | [0134](0134-the-code-store-is-a-component.md) | The code store is a component: `vcs-store` runs `holon-vcs`'s engine on the app's keyvalue (the graph as records with grow-only indexes), the host's `--dir` opens a checkout directory, and `comp-vcs` with its NATS and SurrealDB adapters is deleted | **accepted** |
 | [0135](0135-the-matrix-bridge-is-a-component.md) | The Matrix bridge is a component: `matrix-bridge` runs `agent-matrix` on comp-host, a message starts a runtime job the pump delivers, its rooms are one compare-and-set document in the app's keyvalue, setup moves to `holon matrix`, and the native binary is deleted | **accepted** |
+| [0136](0136-nodes-build-share-and-run-agents.md) | Every node runs components and agents: components are shared as published artifacts and built where a toolchain runs (MoonBit too, natively on aarch64 Linux), `comp-agent` keeps the host current too, agents run where their capabilities are, knowledge travels over NATS per project | **proposed** |
 
 ## History: superseded, and kept
 

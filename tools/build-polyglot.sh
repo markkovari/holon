@@ -26,8 +26,8 @@ go)
       https://github.com/bytecodealliance/wasmtime/releases/latest/download/wasi_snapshot_preview1.reactor.wasm
   fi
   cd "components/${cap}-go"
-  core="$(mktemp -t polycore).wasm"
-  embedded="$(mktemp -t polyembed).wasm"
+  core="$(mktemp "${TMPDIR:-/tmp}/polycore.XXXXXX").wasm"
+  embedded="$(mktemp "${TMPDIR:-/tmp}/polyembed.XXXXXX").wasm"
   trap 'rm -f "$core" "$embedded"' EXIT
   GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -ldflags=-checklinkname=0 -o "$core" .
   wasm-tools component embed ./wit "$core" --world "${cap}-go" -o "$embedded"
@@ -72,7 +72,7 @@ mbt)
   [ -x "$moon" ] || { echo "no moon at '$moon' — https://www.moonbitlang.com/download" >&2; exit 1; }
   cd "components/${cap}-mbt"
   "$moon" build --target wasm --release --quiet
-  embedded="$(mktemp -t polyembed).wasm"
+  embedded="$(mktemp "${TMPDIR:-/tmp}/polyembed.XXXXXX").wasm"
   trap 'rm -f "$embedded"' EXIT
   wasm-tools component embed ./wit --world "$cap" --encoding utf16 \
     _build/wasm/release/build/gen/gen.wasm -o "$embedded"
