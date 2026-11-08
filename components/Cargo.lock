@@ -3541,13 +3541,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "textdiff"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
