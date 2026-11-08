@@ -225,6 +225,22 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
     Ok(())
 }
 
+fn find_moon() -> String {
+    if let Ok(m) = std::env::var("MOON") {
+        return m;
+    }
+    if Command::new("moon").arg("version").output().is_ok() {
+        return "moon".to_string();
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(home).join(".moon/bin/moon");
+        if p.is_file() {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    "moon".to_string()
+}
+
 pub fn build_moonbit_components(_force: bool) -> Result<()> {
     let components_dir = Path::new("components");
     let target_dir = Path::new("components/target/wasm32-wasip2/release");
@@ -241,7 +257,7 @@ pub fn build_moonbit_components(_force: bool) -> Result<()> {
                 let out_wasm = target_dir.join(format!("{snake}.wasm"));
 
                 println!("  Building MoonBit component: {}...", name.cyan());
-                let moon = std::env::var("MOON").unwrap_or_else(|_| "moon".to_string());
+                let moon = find_moon();
                 let mut build = Command::new(&moon);
                 build.args(["build", "--target", "wasm", "--release"]).current_dir(&path);
                 run_cmd(&mut build, &format!("moon build {name}"))?;
