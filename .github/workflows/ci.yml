@@ -98,6 +98,13 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-component@0.21.1,wasm-tools
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
@@ -556,6 +563,8 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-component@0.21.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # `version-probe` is a p3 crate now: `wit_bindgen::generate!` makes its
       # bindings at compile time, so only `slug` needs cargo-component here.
@@ -597,6 +606,8 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # `shared-key` with `reconciler-artifact-suites` — see `native-
       # binaries`'s own comment for the fuller history. `host`/`cli` no
@@ -734,6 +745,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-component@0.21.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
@@ -866,6 +879,8 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: zizmor
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Security audit workflows with zizmor
         run: zizmor --min-severity medium .github/workflows/
 
@@ -1036,6 +1051,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-component@0.21.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:

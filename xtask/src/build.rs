@@ -113,6 +113,8 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
     cmd.args(["build", "--release", "--target", "wasm32-wasip2"]).current_dir("components");
     run_cmd(&mut cmd, "cargo build --release --target wasm32-wasip2")?;
 
+    build_moonbit_components(force)?;
+
     let rustv = get_rustc_version().unwrap_or_else(|_| "1.85.0".to_string());
     let mut stamped = 0;
     let mut skipped = 0;
@@ -174,6 +176,10 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
                     continue;
                 }
 
+                let is_mbt = Path::new("components").join(&name).join("moon.mod").is_file()
+                    || Path::new("components").join(&name).join("moon.mod.json").is_file();
+                let lang =
+                    if is_mbt { "MoonBit=0.1.0".to_string() } else { format!("Rust={rustv}") };
                 let named_path = file_path.with_extension("named");
                 let mut stamp_cmd = Command::new("wasm-tools");
                 stamp_cmd.args([
@@ -182,7 +188,7 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
                     "--name",
                     &name,
                     "--language",
-                    &format!("Rust={rustv}"),
+                    &lang,
                     file_path.to_str().unwrap(),
                     "-o",
                     named_path.to_str().unwrap(),
@@ -216,5 +222,106 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
         .green()
         .bold()
     );
+    Ok(())
+}
+
+fn find_moon() -> String {
+    if let Ok(m) = std::env::var("MOON") {
+        return m;
+    }
+    if Command::new("moon").arg("version").output().is_ok() {
+        return "moon".to_string();
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(home).join(".moon/bin/moon");
+        if p.is_file() {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    "moon".to_string()
+}
+
+pub fn build_moonbit_components(_force: bool) -> Result<()> {
+    let components_dir = Path::new("components");
+    let target_dir = Path::new("components/target/wasm32-wasip2/release");
+    fs::create_dir_all(target_dir)?;
+
+    if let Ok(entries) = fs::read_dir(components_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir()
+                && (path.join("moon.mod").is_file() || path.join("moon.mod.json").is_file())
+            {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let snake = name.replace('-', "_");
+                let out_wasm = target_dir.join(format!("{snake}.wasm"));
+
+                println!("  Building MoonBit component: {}...", name.cyan());
+                let moon = find_moon();
+                let mut build = Command::new(&moon);
+                build.args(["build", "--target", "wasm", "--release"]).current_dir(&path);
+                run_cmd(&mut build, &format!("moon build {name}"))?;
+
+                let core = path.join("_build/wasm/release/build/gen/gen.wasm");
+                if !core.exists() {
+                    continue;
+                }
+
+                let embedded = path.join("embedded.wasm");
+                let wit_dir = if path.join("wit").is_dir() {
+                    path.join("wit")
+                } else {
+                    PathBuf::from(format!("components/{name}/wit"))
+                };
+
+                let world = fs::read_dir(&wit_dir)
+                    .ok()
+                    .and_then(|entries| {
+                        for e in entries.flatten() {
+                            if e.path().extension().is_some_and(|ext| ext == "wit") {
+                                if let Ok(w) = fs::read_to_string(e.path()) {
+                                    if let Some(wname) = w.lines().find_map(|l| {
+                                        l.trim()
+                                            .strip_prefix("world ")
+                                            .and_then(|r| r.split_whitespace().next())
+                                            .map(|r| r.trim_end_matches(['{', ' ']).to_string())
+                                    }) {
+                                        return Some(wname);
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    })
+                    .unwrap_or_else(|| name.clone());
+
+                let mut embed = Command::new("wasm-tools");
+                embed.args([
+                    "component",
+                    "embed",
+                    wit_dir.to_str().unwrap(),
+                    core.to_str().unwrap(),
+                    "--world",
+                    &world,
+                    "--encoding",
+                    "utf16",
+                    "-o",
+                    embedded.to_str().unwrap(),
+                ]);
+                run_cmd(&mut embed, "wasm-tools component embed")?;
+
+                let mut new_comp = Command::new("wasm-tools");
+                new_comp.args([
+                    "component",
+                    "new",
+                    embedded.to_str().unwrap(),
+                    "-o",
+                    out_wasm.to_str().unwrap(),
+                ]);
+                run_cmd(&mut new_comp, "wasm-tools component new")?;
+                let _ = fs::remove_file(&embedded);
+            }
+        }
+    }
     Ok(())
 }

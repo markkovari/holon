@@ -101,7 +101,7 @@ impl NatsLattice {
 impl Inventory for NatsLattice {
     async fn publish(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> Result<()> {
         // See `connect`: the TTL is the bucket's.
-        let value = crate::snapshot::compress(value);
+        let value = crate::snapshot::compress(&value);
         self.kv.put(key, value.into()).await.context("publishing inventory")?;
         Ok(())
     }
@@ -113,7 +113,7 @@ impl Inventory for NatsLattice {
             let key = key.context("reading an inventory key")?;
             // Absent: it expired between the list and the read, which is not an error.
             if let Some(raw) = self.kv.get(&key).await.context("reading an inventory entry")? {
-                out.push(Entry { key, value: crate::snapshot::expand(raw.to_vec()) });
+                out.push(Entry { key, value: crate::snapshot::expand(&raw) });
             }
         }
         Ok(out)
@@ -136,7 +136,7 @@ impl CommandBus for NatsLattice {
             while let Some(msg) = sub.next().await {
                 let verb = wire::verb_of(msg.subject.as_str()).to_string();
                 let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                let cmd = Command { verb, payload: msg.payload.to_vec(), reply: reply_tx };
+                let cmd = Command { verb, payload: msg.payload, reply: reply_tx };
                 if tx.send(cmd).await.is_err() {
                     break; // the agent is gone
                 }

@@ -62,7 +62,7 @@ impl CommandBus for MemoryLattice {
         let tx = self.handlers.lock().unwrap().get(node).cloned();
         let Some(tx) = tx else { bail!("no responders for node {node}") };
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        tx.send(Command { verb: verb.to_string(), payload, reply: reply_tx })
+        tx.send(Command { verb: verb.to_string(), payload: payload.into(), reply: reply_tx })
             .await
             .map_err(|_| anyhow::anyhow!("node {node} stopped listening"))?;
         tokio::time::timeout(timeout, reply_rx)
@@ -113,7 +113,7 @@ mod tests {
         let worker = tokio::spawn(async move {
             let cmd = rx.recv().await.expect("a command");
             assert_eq!(cmd.verb, "start");
-            assert_eq!(cmd.payload, b"{}".to_vec());
+            assert_eq!(&cmd.payload[..], b"{}");
             let _ = cmd.reply.send(b"{\"ok\":true}".to_vec());
         });
         let reply =

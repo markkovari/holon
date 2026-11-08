@@ -1,0 +1,1 @@
+Diff two texts and apply unified patches.

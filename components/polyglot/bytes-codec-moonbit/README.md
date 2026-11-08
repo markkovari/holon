@@ -1,14 +1,13 @@
-# `bytes:codec` in MoonBit — a polyglot attempt, and where it stops
+# `bytes:codec` in MoonBit — Graduated to Production
 
-The same `bytes:codec` WIT the Rust component exports, implemented in MoonBit. It is
-kept because it got further than "it does not work" and the place it stops is a
-toolchain bug worth being able to re-test, not a design problem.
+> [!NOTE]
+> This polyglot proof-of-concept demonstrated that `wasm-tools component embed` with `--encoding utf16`
+> completely resolves the UTF-16 string lowering issue. The MoonBit implementation has graduated
+> to [`components/bytes-codec`](../../bytes-codec) as the production component.
 
 ```bash
-moon build --target wasm --release
-wasm-tools component embed ../bytes-codec/wit _build/wasm/release/build/gen/gen.wasm \
-  --world bytes-codec -o embedded.wasm
-wasm-tools component new embedded.wasm -o bytes_codec_moonbit.wasm
+cargo xtask parity bytes-codec
+components/gates.sh
 ```
 
 ## What worked

@@ -1,0 +1,1 @@
+`case-conv` provides all four; pure compute, no host imports.

@@ -1,0 +1,21 @@
+import {
+  "iban/validate/gen/interface/iban/validate/validator" @validator,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportValidate:iban:validate/validator@0.1.0#validate",
+        "wasmExportValidatePostReturn:cabi_post_iban:validate/validator@0.1.0#validate"
+      ],
+    },
+  },
+)

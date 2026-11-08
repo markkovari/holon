@@ -1,0 +1,21 @@
+import {
+  "demo/bigadd/gen/interface/demo/bigadd/bignum" @bignum,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportAdd:demo:bigadd/bignum@0.1.0#add",
+        "wasmExportAddPostReturn:cabi_post_demo:bigadd/bignum@0.1.0#add"
+      ],
+    },
+  },
+)

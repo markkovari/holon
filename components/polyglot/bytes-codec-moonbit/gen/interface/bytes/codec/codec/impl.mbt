@@ -12,8 +12,10 @@
 
 // `Array[Char]`, not `String`: a MoonBit string indexes to UTF-16 code units, and
 // `write_char` wants a Char. The tables are ASCII either way.
+///|
 let std_table : Array[Char] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".to_array()
 
+///|
 let url_table : Array[Char] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".to_array()
 
 ///|
@@ -22,7 +24,7 @@ let url_table : Array[Char] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 /// The two alphabets are NOT interchangeable: a character belonging to the other
 /// table is refused here rather than accepted because some table has it. Decoding
 /// with the wrong one otherwise returns different bytes and reports nothing.
-fn char_value(c : Char, alphabet : Alphabet) -> Int {
+fn char_value(c : Char, alphabet : Alphabet) -> Int32 {
   let n = c.to_int()
   if n >= 'A'.to_int() && n <= 'Z'.to_int() {
     n - 'A'.to_int()
@@ -32,22 +34,8 @@ fn char_value(c : Char, alphabet : Alphabet) -> Int {
     n - '0'.to_int() + 52
   } else {
     match alphabet {
-      STANDARD =>
-        if c == '+' {
-          62
-        } else if c == '/' {
-          63
-        } else {
-          -1
-        }
-      URL_SAFE =>
-        if c == '-' {
-          62
-        } else if c == '_' {
-          63
-        } else {
-          -1
-        }
+      STANDARD => if c == '+' { 62 } else if c == '/' { 63 } else { -1 }
+      URL_SAFE => if c == '-' { 62 } else if c == '_' { 63 } else { -1 }
     }
   }
 }
@@ -124,9 +112,7 @@ pub fn decode(
       // The character itself, so a caller can say which one without printing the
       // payload it came from.
       return Err(
-        NotInAlphabet(
-          (i.reinterpret_as_uint(), String::from_array([chars[i]])),
-        ),
+        NotInAlphabet((i.reinterpret_as_uint(), String::from_array([chars[i]]))),
       )
     }
     values.push(v)

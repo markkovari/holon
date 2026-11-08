@@ -1,0 +1,1 @@
+`textdiff` provides line diff / unified output / apply; pure compute.

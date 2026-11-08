@@ -35,7 +35,7 @@ fn hold_inventory_empty(
             while !stop.load(Ordering::Relaxed) {
                 for e in &entries {
                     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(
-                        &holon_lattice::snapshot::expand(e.value.clone()),
+                        &holon_lattice::snapshot::expand(&e.value),
                     ) else {
                         continue;
                     };

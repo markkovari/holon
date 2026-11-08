@@ -139,6 +139,11 @@ const DELIBERATE: &[(&str, &str)] = &[
         "actor instances implement this handler interface to process messages and \
          lifecycle events. Each actor type (like ticket-actor) has its own implementation.",
     ),
+    (
+        "holon:tool/tool",
+        "agent tools implement this interface (ADR-0125) to expose callable capabilities \
+         (e.g. gcal, text-stats-mbt, and forged tools) to the agent runtime.",
+    ),
 ];
 
 /// A working search and a broken one look identical from outside, so count what got through.

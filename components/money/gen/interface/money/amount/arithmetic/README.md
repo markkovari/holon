@@ -1,0 +1,1 @@
+Exact money arithmetic over integer minor units.

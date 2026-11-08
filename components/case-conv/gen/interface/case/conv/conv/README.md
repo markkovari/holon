@@ -1,0 +1,1 @@
+snake_case, kebab-case, camelCase and PascalCase, in either direction.

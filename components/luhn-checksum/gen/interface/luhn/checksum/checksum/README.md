@@ -1,0 +1,1 @@
+Luhn (mod-10) validation and generation over a string of ASCII digits.

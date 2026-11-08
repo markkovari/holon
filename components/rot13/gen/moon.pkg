@@ -1,0 +1,21 @@
+import {
+  "demo/rot13/gen/interface/demo/rot13/cipher" @cipher,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportRot13:demo:rot13/cipher@0.1.0#rot13",
+        "wasmExportRot13PostReturn:cabi_post_demo:rot13/cipher@0.1.0#rot13"
+      ],
+    },
+  },
+)

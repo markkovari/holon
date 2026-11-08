@@ -1,0 +1,27 @@
+import {
+  "case/conv/gen/interface/case/conv/conv" @conv,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportToCamel:case:conv/conv@0.1.0#to-camel",
+        "wasmExportToCamelPostReturn:cabi_post_case:conv/conv@0.1.0#to-camel",
+        "wasmExportToKebab:case:conv/conv@0.1.0#to-kebab",
+        "wasmExportToKebabPostReturn:cabi_post_case:conv/conv@0.1.0#to-kebab",
+        "wasmExportToPascal:case:conv/conv@0.1.0#to-pascal",
+        "wasmExportToPascalPostReturn:cabi_post_case:conv/conv@0.1.0#to-pascal",
+        "wasmExportToSnake:case:conv/conv@0.1.0#to-snake",
+        "wasmExportToSnakePostReturn:cabi_post_case:conv/conv@0.1.0#to-snake"
+      ],
+    },
+  },
+)

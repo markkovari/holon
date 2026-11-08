@@ -1,0 +1,1 @@
+`luhn-checksum` provides all three; pure compute, no host imports.

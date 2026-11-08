@@ -1,0 +1,1 @@
+`csv` provides the codec; pure compute, no host imports.

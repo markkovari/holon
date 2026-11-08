@@ -1,0 +1,23 @@
+import {
+  "luhn/checksum/gen/interface/luhn/checksum/checksum" @checksum,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportAppendChecksum:luhn:checksum/checksum@0.1.0#append-checksum",
+        "wasmExportAppendChecksumPostReturn:cabi_post_luhn:checksum/checksum@0.1.0#append-checksum",
+        "wasmExportChecksumDigit:luhn:checksum/checksum@0.1.0#checksum-digit",
+        "wasmExportIsValid:luhn:checksum/checksum@0.1.0#is-valid"
+      ],
+    },
+  },
+)

@@ -308,13 +308,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bigadd"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "billing-domain"
 version = "0.1.0"
 dependencies = [
@@ -455,13 +448,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
-name = "bytes-codec"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "cache"
 version = "0.1.0"
 dependencies = [
@@ -470,13 +456,6 @@ dependencies = [
 
 [[package]]
 name = "cache-backing"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "calc"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen-rt",
@@ -501,13 +480,6 @@ name = "card-identify"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "case-conv"
-version = "0.1.0"
-dependencies = [
  "wit-bindgen-rt",
 ]
 
@@ -779,13 +751,6 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
-]
-
-[[package]]
-name = "csv"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -1124,13 +1089,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "expr"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1446,13 +1404,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glob"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "golem-bridge"
 version = "0.1.0"
 dependencies = [
@@ -1647,13 +1598,6 @@ name = "i18n-catalog"
 version = "0.1.0"
 dependencies = [
  "base64",
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "iban"
-version = "0.1.0"
-dependencies = [
  "wit-bindgen-rt",
 ]
 
@@ -2223,13 +2167,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "luhn-checksum"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "macro-string"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2413,13 +2350,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "money"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2537,13 +2467,6 @@ dependencies = [
  "holon-llm",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "ordinal"
-version = "0.1.0"
-dependencies = [
  "wit-bindgen-rt",
 ]
 
@@ -2726,13 +2649,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "pii-redact"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -3123,13 +3039,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roman"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "room-booking-domain"
 version = "0.1.0"
 dependencies = [
@@ -3138,13 +3047,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "rot13"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -3636,13 +3538,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "textdiff"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]

@@ -1,0 +1,25 @@
+import {
+  "diff/text/gen/interface/diff/text/differ" @differ,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportApplyUnified:diff:text/differ@0.1.0#apply-unified",
+        "wasmExportApplyUnifiedPostReturn:cabi_post_diff:text/differ@0.1.0#apply-unified",
+        "wasmExportDiffLines:diff:text/differ@0.1.0#diff-lines",
+        "wasmExportDiffLinesPostReturn:cabi_post_diff:text/differ@0.1.0#diff-lines",
+        "wasmExportUnified:diff:text/differ@0.1.0#unified",
+        "wasmExportUnifiedPostReturn:cabi_post_diff:text/differ@0.1.0#unified"
+      ],
+    },
+  },
+)
