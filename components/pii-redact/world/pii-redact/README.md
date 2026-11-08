@@ -1,0 +1,1 @@
+`pii-redact` provides PII detection/masking; pure compute, no host imports.

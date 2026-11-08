@@ -1,0 +1,25 @@
+import {
+  "pii/redact/gen/interface/pii/redact/redactor" @redactor,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportDetect:pii:redact/redactor@0.1.0#detect",
+        "wasmExportDetectPostReturn:cabi_post_pii:redact/redactor@0.1.0#detect",
+        "wasmExportMask:pii:redact/redactor@0.1.0#mask",
+        "wasmExportMaskPostReturn:cabi_post_pii:redact/redactor@0.1.0#mask",
+        "wasmExportRedact:pii:redact/redactor@0.1.0#redact",
+        "wasmExportRedactPostReturn:cabi_post_pii:redact/redactor@0.1.0#redact"
+      ],
+    },
+  },
+)

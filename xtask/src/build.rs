@@ -258,15 +258,24 @@ pub fn build_moonbit_components(_force: bool) -> Result<()> {
                     PathBuf::from(format!("components/{name}/wit"))
                 };
 
-                let world = fs::read_to_string(wit_dir.join("world.wit"))
-                    .or_else(|_| fs::read_to_string(wit_dir.join("codec.wit")))
+                let world = fs::read_dir(&wit_dir)
                     .ok()
-                    .and_then(|w| {
-                        w.lines().find_map(|l| {
-                            l.trim()
-                                .strip_prefix("world ")
-                                .map(|r| r.trim_end_matches(['{', ' ']).to_string())
-                        })
+                    .and_then(|entries| {
+                        for e in entries.flatten() {
+                            if e.path().extension().is_some_and(|ext| ext == "wit") {
+                                if let Ok(w) = fs::read_to_string(e.path()) {
+                                    if let Some(wname) = w.lines().find_map(|l| {
+                                        l.trim()
+                                            .strip_prefix("world ")
+                                            .and_then(|r| r.split_whitespace().next())
+                                            .map(|r| r.trim_end_matches(['{', ' ']).to_string())
+                                    }) {
+                                        return Some(wname);
+                                    }
+                                }
+                            }
+                        }
+                        None
                     })
                     .unwrap_or_else(|| name.clone());
 
