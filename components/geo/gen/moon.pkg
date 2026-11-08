@@ -1,0 +1,23 @@
+import {
+  "geo/resolve/gen/interface/geo/resolve/coords" @coords,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportBoundingBox:geo:resolve/coords@0.1.0#bounding-box",
+        "wasmExportClassifyIp:geo:resolve/coords@0.1.0#classify-ip",
+        "wasmExportContains:geo:resolve/coords@0.1.0#contains",
+        "wasmExportDistanceMeters:geo:resolve/coords@0.1.0#distance-meters"
+      ],
+    },
+  },
+)

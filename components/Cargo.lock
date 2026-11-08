@@ -1359,13 +1359,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "geo"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2912,13 +2905,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
-name = "quiz-grade"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "quota"
 version = "0.1.0"
 dependencies = [
@@ -3047,13 +3033,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "rrule"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -3263,13 +3242,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "shaper"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]

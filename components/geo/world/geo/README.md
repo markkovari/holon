@@ -1,0 +1,1 @@
+`geo` provides coordinate math + IP classing; pure compute, no host imports.

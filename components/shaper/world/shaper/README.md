@@ -1,0 +1,1 @@
+`shaper` provides the limiter algorithms; pure compute, no host imports.

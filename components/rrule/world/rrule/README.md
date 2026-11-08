@@ -1,0 +1,1 @@
+`rrule` provides the recur interface; pure compute, no host imports.

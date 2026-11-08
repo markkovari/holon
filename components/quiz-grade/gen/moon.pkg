@@ -1,0 +1,22 @@
+import {
+  "quiz/grade/gen/interface/quiz/grade/grader" @grader,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportDistribution:quiz:grade/grader@0.1.0#distribution",
+        "wasmExportDistributionPostReturn:cabi_post_quiz:grade/grader@0.1.0#distribution",
+        "wasmExportGrade:quiz:grade/grader@0.1.0#grade"
+      ],
+    },
+  },
+)
