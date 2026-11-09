@@ -1,0 +1,1 @@
+`markdown` provides safe MD->HTML; pure compute, no host imports.

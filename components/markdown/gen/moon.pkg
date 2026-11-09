@@ -1,0 +1,25 @@
+import {
+  "md/render/gen/interface/md/render/renderer" @renderer,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportToHtml:md:render/renderer@0.1.0#to-html",
+        "wasmExportToHtmlPostReturn:cabi_post_md:render/renderer@0.1.0#to-html",
+        "wasmExportToHtmlWith:md:render/renderer@0.1.0#to-html-with",
+        "wasmExportToHtmlWithPostReturn:cabi_post_md:render/renderer@0.1.0#to-html-with",
+        "wasmExportToText:md:render/renderer@0.1.0#to-text",
+        "wasmExportToTextPostReturn:cabi_post_md:render/renderer@0.1.0#to-text"
+      ],
+    },
+  },
+)
