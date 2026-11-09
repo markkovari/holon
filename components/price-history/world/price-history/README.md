@@ -1,0 +1,1 @@
+`price-history` provides the shaping; pure compute, no host imports.

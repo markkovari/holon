@@ -1,0 +1,23 @@
+import {
+  "price/history/gen/interface/price/history/history" @history,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportAt:price:history/history@0.1.0#at",
+        "wasmExportAtPostReturn:cabi_post_price:history/history@0.1.0#at",
+        "wasmExportSeries:price:history/history@0.1.0#series",
+        "wasmExportSeriesPostReturn:cabi_post_price:history/history@0.1.0#series"
+      ],
+    },
+  },
+)

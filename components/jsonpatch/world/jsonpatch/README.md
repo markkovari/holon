@@ -1,0 +1,1 @@
+`jsonpatch` provides patch/merge/diff; pure compute, no host imports.

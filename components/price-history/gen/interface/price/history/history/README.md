@@ -1,0 +1,1 @@
+What a price was, at an instant and across a window.
