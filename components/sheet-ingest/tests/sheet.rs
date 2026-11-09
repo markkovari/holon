@@ -6,12 +6,26 @@ use sheet_ingest::{
 };
 
 fn parts() -> Vec<(String, Vec<u8>)> {
-    let bytes = include_bytes!("fixtures/cards.xlsx");
-    zip::extract(bytes)
-        .expect("the fixture is a real xlsx")
-        .into_iter()
-        .map(|f| (f.name, f.data))
-        .collect()
+    vec![
+        (
+            "[Content_Types].xml".to_string(),
+            include_bytes!("fixtures/parts/[Content_Types].xml").to_vec(),
+        ),
+        ("_rels/.rels".to_string(), include_bytes!("fixtures/parts/_rels/.rels").to_vec()),
+        ("xl/workbook.xml".to_string(), include_bytes!("fixtures/parts/xl/workbook.xml").to_vec()),
+        (
+            "xl/_rels/workbook.xml.rels".to_string(),
+            include_bytes!("fixtures/parts/xl/_rels/workbook.xml.rels").to_vec(),
+        ),
+        (
+            "xl/sharedStrings.xml".to_string(),
+            include_bytes!("fixtures/parts/xl/sharedStrings.xml").to_vec(),
+        ),
+        (
+            "xl/worksheets/sheet1.xml".to_string(),
+            include_bytes!("fixtures/parts/xl/worksheets/sheet1.xml").to_vec(),
+        ),
+    ]
 }
 
 #[test]

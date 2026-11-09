@@ -1,0 +1,10 @@
+import {
+  "moonbitlang/core/compress/flate" @flate,
+  "moonbitlang/core/encoding/utf8" @utf8,
+}
+
+options(
+  "allow-experimental-packages": ["moonbitlang/core/compress/flate"],
+)
+
+warnings = "-44"

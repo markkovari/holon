@@ -1,0 +1,23 @@
+import {
+  "deck/build/gen/interface/deck/build/builder" @builder,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportLegality:deck:build/builder@0.1.0#legality",
+        "wasmExportLegalityPostReturn:cabi_post_deck:build/builder@0.1.0#legality",
+        "wasmExportShortfall:deck:build/builder@0.1.0#shortfall",
+        "wasmExportShortfallPostReturn:cabi_post_deck:build/builder@0.1.0#shortfall"
+      ],
+    },
+  },
+)
