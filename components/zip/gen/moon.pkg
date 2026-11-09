@@ -1,0 +1,23 @@
+import {
+  "zip/archive/gen/interface/zip/archive/archiver" @archiver,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportArchive:zip:archive/archiver@0.1.0#archive",
+        "wasmExportArchivePostReturn:cabi_post_zip:archive/archiver@0.1.0#archive",
+        "wasmExportExtract:zip:archive/archiver@0.1.0#extract",
+        "wasmExportExtractPostReturn:cabi_post_zip:archive/archiver@0.1.0#extract"
+      ],
+    },
+  },
+)

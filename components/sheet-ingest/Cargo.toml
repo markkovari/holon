@@ -13,10 +13,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 wit-bindgen-rt = { workspace = true }
 
-[dev-dependencies]
-# The spec reads the real `.xlsx` with the composed component's reader, not a test-only one.
-zip = { path = "../zip" }
-
 [package.metadata.component]
 package = "sheet:component"
 

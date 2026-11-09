@@ -1,0 +1,1 @@
+`deck-build` provides legality and the shopping list; pure compute.

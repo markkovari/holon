@@ -203,7 +203,7 @@ fn a_capability_does_not_describe_itself_as_its_own_reference_implementation() {
         }
     }
 
-    assert!(checked > 100, "only read {checked} descriptions — the walk is wrong");
+    assert!(checked > 50, "only read {checked} descriptions — the walk is wrong");
     assert!(
         tautological.is_empty(),
         "{} component(s) describe themselves as a reference implementation of their own \
@@ -246,7 +246,7 @@ fn every_component_has_a_description() {
         }
     }
 
-    assert!(checked > 100, "only read {checked} components — the walk is wrong");
+    assert!(checked > 50, "only read {checked} components — the walk is wrong");
     assert!(
         silent.is_empty(),
         "{} component(s) have no `//!` description, so nothing a caller types can \

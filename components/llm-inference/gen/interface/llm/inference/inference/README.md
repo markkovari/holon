@@ -1,0 +1,1 @@
+Chat + text completion + embeddings, vendor-agnostic.
