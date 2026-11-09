@@ -3008,13 +3008,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "resilience"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "rfc6979"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3275,13 +3268,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
-name = "slug"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "slug-probe"
 version = "0.1.0"
 dependencies = [
@@ -3441,13 +3427,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "svg-chart"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -3781,14 +3760,6 @@ dependencies = [
  "getrandom",
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "validate"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wit-bindgen-rt",
 ]
 
 [[package]]

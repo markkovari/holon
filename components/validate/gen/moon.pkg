@@ -1,0 +1,21 @@
+import {
+  "validate/schema/gen/interface/validate/schema/validator" @validator,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportValidate:validate:schema/validator@0.1.0#validate",
+        "wasmExportValidatePostReturn:cabi_post_validate:schema/validator@0.1.0#validate"
+      ],
+    },
+  },
+)

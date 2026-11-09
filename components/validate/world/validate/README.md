@@ -1,0 +1,1 @@
+`validate` provides declarative validation; pure compute, no host imports.

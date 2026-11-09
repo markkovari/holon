@@ -1,0 +1,1 @@
+Circuit-breaker state machine + retry backoff, as pure functions.

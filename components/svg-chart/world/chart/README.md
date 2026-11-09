@@ -1,0 +1,1 @@
+`svg-chart` provides the renderer; pure compute, no host imports.

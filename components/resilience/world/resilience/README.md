@@ -1,0 +1,1 @@
+`resilience` provides the breaker + backoff algorithms; pure compute.

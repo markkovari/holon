@@ -1,0 +1,1 @@
+`slug` provides slug generation; pure compute, no host imports.

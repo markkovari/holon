@@ -1,0 +1,1 @@
+Validate JSON objects against a declarative field-rule list.

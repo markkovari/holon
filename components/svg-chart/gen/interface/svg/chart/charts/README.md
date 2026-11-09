@@ -1,0 +1,1 @@
+Render a single-series chart to an SVG document.
