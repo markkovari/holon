@@ -1,0 +1,25 @@
+import {
+  "slug/generate/gen/interface/slug/generate/generator" @generator,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportSlugify:slug:generate/generator@0.1.0#slugify",
+        "wasmExportSlugifyPostReturn:cabi_post_slug:generate/generator@0.1.0#slugify",
+        "wasmExportSlugifyWith:slug:generate/generator@0.1.0#slugify-with",
+        "wasmExportSlugifyWithPostReturn:cabi_post_slug:generate/generator@0.1.0#slugify-with",
+        "wasmExportUniquify:slug:generate/generator@0.1.0#uniquify",
+        "wasmExportUniquifyPostReturn:cabi_post_slug:generate/generator@0.1.0#uniquify"
+      ],
+    },
+  },
+)

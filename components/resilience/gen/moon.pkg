@@ -1,0 +1,22 @@
+import {
+  "resilience/breaker/gen/interface/resilience/breaker/breaker" @breaker,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportAdmit:resilience:breaker/breaker@0.1.0#admit",
+        "wasmExportBackoff:resilience:breaker/breaker@0.1.0#backoff",
+        "wasmExportObserve:resilience:breaker/breaker@0.1.0#observe"
+      ],
+    },
+  },
+)
