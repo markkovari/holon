@@ -1,0 +1,25 @@
+import {
+  "json/patch/gen/interface/json/patch/patcher" @patcher,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportApplyMerge:json:patch/patcher@0.1.0#apply-merge",
+        "wasmExportApplyMergePostReturn:cabi_post_json:patch/patcher@0.1.0#apply-merge",
+        "wasmExportApplyPatch:json:patch/patcher@0.1.0#apply-patch",
+        "wasmExportApplyPatchPostReturn:cabi_post_json:patch/patcher@0.1.0#apply-patch",
+        "wasmExportDiff:json:patch/patcher@0.1.0#diff",
+        "wasmExportDiffPostReturn:cabi_post_json:patch/patcher@0.1.0#diff"
+      ],
+    },
+  },
+)

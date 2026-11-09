@@ -1,0 +1,1 @@
+`portfolio-value` provides valuation; pure compute, no host imports.

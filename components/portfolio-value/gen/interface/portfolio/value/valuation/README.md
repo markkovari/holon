@@ -1,0 +1,1 @@
+Cost basis, gains and the value series a chart is drawn from.

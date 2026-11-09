@@ -1,0 +1,23 @@
+import {
+  "portfolio/value/gen/interface/portfolio/value/valuation" @valuation,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportSeries:portfolio:value/valuation@0.1.0#series",
+        "wasmExportSeriesPostReturn:cabi_post_portfolio:value/valuation@0.1.0#series",
+        "wasmExportValueAt:portfolio:value/valuation@0.1.0#value-at",
+        "wasmExportValueAtPostReturn:cabi_post_portfolio:value/valuation@0.1.0#value-at"
+      ],
+    },
+  },
+)
