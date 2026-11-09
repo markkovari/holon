@@ -1,0 +1,1 @@
+Validate and aggregate double-entry journal entries.

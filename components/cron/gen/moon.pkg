@@ -1,0 +1,25 @@
+import {
+  "cron/expr/gen/interface/cron/expr/parser" @parser,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportMatches:cron:expr/parser@0.1.0#matches",
+        "wasmExportMatchesPostReturn:cabi_post_cron:expr/parser@0.1.0#matches",
+        "wasmExportNext:cron:expr/parser@0.1.0#next",
+        "wasmExportNextPostReturn:cabi_post_cron:expr/parser@0.1.0#next",
+        "wasmExportParse:cron:expr/parser@0.1.0#parse",
+        "wasmExportParsePostReturn:cabi_post_cron:expr/parser@0.1.0#parse"
+      ],
+    },
+  },
+)

@@ -1,0 +1,23 @@
+import {
+  "ledger/doubleentry/gen/interface/ledger/doubleentry/ledger" @ledger,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportTrialBalance:ledger:doubleentry/ledger@0.1.0#trial-balance",
+        "wasmExportTrialBalancePostReturn:cabi_post_ledger:doubleentry/ledger@0.1.0#trial-balance",
+        "wasmExportValidate:ledger:doubleentry/ledger@0.1.0#validate",
+        "wasmExportValidatePostReturn:cabi_post_ledger:doubleentry/ledger@0.1.0#validate"
+      ],
+    },
+  },
+)
