@@ -566,11 +566,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # `version-probe` is a p3 crate now: `wit_bindgen::generate!` makes its
-      # bindings at compile time, so only `slug` needs cargo-component here.
-      - name: Generate bindings for the crates newversion/slug_live don't generate their own for
-        working-directory: components
-        run: cargo component check --release -p slug
+      # `version-probe` is a p3 crate and `slug` is MoonBit (built by xtask and fetched
+      # as a component artifact), so neither test requires pre-generating Rust bindings.
 
       # nats-server, and it buys more than any other line in this file.
       #

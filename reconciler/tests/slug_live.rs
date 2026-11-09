@@ -13,9 +13,8 @@ use serde_json::{json, Value};
 fn composed_slug_probe() -> Vec<u8> {
     let comp = repo_root().join("components");
     let rel = comp.join("target/wasm32-wasip2/release");
-    // Build both. slug-probe is p3 and makes its own bindings; `slug` is p2 and CI generates its bindings first.
-    let args =
-        vec!["build", "--release", "--target", "wasm32-wasip2", "-p", "slug-probe", "-p", "slug"];
+    // Build slug-probe. slug is built by MoonBit into rel.
+    let args = vec!["build", "--release", "--target", "wasm32-wasip2", "-p", "slug-probe"];
     let out = Command::new("cargo").current_dir(&comp).args(&args).output().expect("cargo");
     assert!(out.status.success(), "{args:?} failed:\n{}", String::from_utf8_lossy(&out.stderr));
     // Composed by the library, not `wac`: the plug list comes from what slug-probe imports, so it cannot
