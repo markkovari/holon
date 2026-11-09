@@ -1,0 +1,1 @@
+Merge, read, and mutate CvRDT state values.

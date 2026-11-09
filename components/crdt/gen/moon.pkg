@@ -1,0 +1,55 @@
+import {
+  "crdt/merge/gen/interface/crdt/merge/merger" @merger,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportCounterAdd:crdt:merge/merger@0.1.0#counter-add",
+        "wasmExportCounterAddPostReturn:cabi_post_crdt:merge/merger@0.1.0#counter-add",
+        "wasmExportCounterNew:crdt:merge/merger@0.1.0#counter-new",
+        "wasmExportCounterNewPostReturn:cabi_post_crdt:merge/merger@0.1.0#counter-new",
+        "wasmExportLwwNew:crdt:merge/merger@0.1.0#lww-new",
+        "wasmExportLwwNewPostReturn:cabi_post_crdt:merge/merger@0.1.0#lww-new",
+        "wasmExportLwwSet:crdt:merge/merger@0.1.0#lww-set",
+        "wasmExportLwwSetPostReturn:cabi_post_crdt:merge/merger@0.1.0#lww-set",
+        "wasmExportLwwmapNew:crdt:merge/merger@0.1.0#lwwmap-new",
+        "wasmExportLwwmapNewPostReturn:cabi_post_crdt:merge/merger@0.1.0#lwwmap-new",
+        "wasmExportLwwmapRemove:crdt:merge/merger@0.1.0#lwwmap-remove",
+        "wasmExportLwwmapRemovePostReturn:cabi_post_crdt:merge/merger@0.1.0#lwwmap-remove",
+        "wasmExportLwwmapSet:crdt:merge/merger@0.1.0#lwwmap-set",
+        "wasmExportLwwmapSetPostReturn:cabi_post_crdt:merge/merger@0.1.0#lwwmap-set",
+        "wasmExportMerge:crdt:merge/merger@0.1.0#merge",
+        "wasmExportMergePostReturn:cabi_post_crdt:merge/merger@0.1.0#merge",
+        "wasmExportOrsetAdd:crdt:merge/merger@0.1.0#orset-add",
+        "wasmExportOrsetAddPostReturn:cabi_post_crdt:merge/merger@0.1.0#orset-add",
+        "wasmExportOrsetNew:crdt:merge/merger@0.1.0#orset-new",
+        "wasmExportOrsetNewPostReturn:cabi_post_crdt:merge/merger@0.1.0#orset-new",
+        "wasmExportOrsetRemove:crdt:merge/merger@0.1.0#orset-remove",
+        "wasmExportOrsetRemovePostReturn:cabi_post_crdt:merge/merger@0.1.0#orset-remove",
+        "wasmExportRgaDelete:crdt:merge/merger@0.1.0#rga-delete",
+        "wasmExportRgaDeleteIds:crdt:merge/merger@0.1.0#rga-delete-ids",
+        "wasmExportRgaDeleteIdsPostReturn:cabi_post_crdt:merge/merger@0.1.0#rga-delete-ids",
+        "wasmExportRgaDeletePostReturn:cabi_post_crdt:merge/merger@0.1.0#rga-delete",
+        "wasmExportRgaElements:crdt:merge/merger@0.1.0#rga-elements",
+        "wasmExportRgaElementsPostReturn:cabi_post_crdt:merge/merger@0.1.0#rga-elements",
+        "wasmExportRgaInsert:crdt:merge/merger@0.1.0#rga-insert",
+        "wasmExportRgaInsertAfter:crdt:merge/merger@0.1.0#rga-insert-after",
+        "wasmExportRgaInsertAfterPostReturn:cabi_post_crdt:merge/merger@0.1.0#rga-insert-after",
+        "wasmExportRgaInsertPostReturn:cabi_post_crdt:merge/merger@0.1.0#rga-insert",
+        "wasmExportRgaNew:crdt:merge/merger@0.1.0#rga-new",
+        "wasmExportRgaNewPostReturn:cabi_post_crdt:merge/merger@0.1.0#rga-new",
+        "wasmExportValue:crdt:merge/merger@0.1.0#value",
+        "wasmExportValuePostReturn:cabi_post_crdt:merge/merger@0.1.0#value"
+      ],
+    },
+  },
+)
