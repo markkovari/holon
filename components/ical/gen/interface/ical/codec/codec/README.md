@@ -1,0 +1,1 @@
+Format calendar events into an RFC 5545 document.

@@ -1,0 +1,1 @@
+`doubleentry` provides the ledger core; pure compute, no host imports.
