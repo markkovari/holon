@@ -305,11 +305,46 @@ pub fn build_moonbit_components(_force: bool) -> Result<()> {
                     })
                     .unwrap_or_else(|| name.clone());
 
+                let embed_wit_dir = path.join("_build/wit");
+                let _ = fs::remove_dir_all(&embed_wit_dir);
+                fs::create_dir_all(&embed_wit_dir)?;
+
+                for entry in fs::read_dir(&wit_dir)?.flatten() {
+                    let ep = entry.path();
+                    if ep.extension().is_some_and(|ext| ext == "wit") {
+                        fs::copy(&ep, embed_wit_dir.join(ep.file_name().unwrap()))?;
+                    }
+                }
+                let embed_deps = embed_wit_dir.join("deps");
+                fs::create_dir_all(&embed_deps)?;
+                if let Ok(canon_root_deps) = fs::canonicalize("wit/deps") {
+                    for entry in fs::read_dir(canon_root_deps)?.flatten() {
+                        let ep = entry.path();
+                        let target = embed_deps.join(ep.file_name().unwrap());
+                        if !target.exists() {
+                            #[cfg(unix)]
+                            let _ = std::os::unix::fs::symlink(&ep, &target);
+                        }
+                    }
+                }
+                if wit_dir.join("deps").is_dir() {
+                    for entry in fs::read_dir(wit_dir.join("deps"))?.flatten() {
+                        let ep = entry.path();
+                        let target = embed_deps.join(ep.file_name().unwrap());
+                        if !target.exists() {
+                            #[cfg(unix)]
+                            if let Ok(canon) = fs::canonicalize(&ep) {
+                                let _ = std::os::unix::fs::symlink(&canon, &target);
+                            }
+                        }
+                    }
+                }
+
                 let mut embed = Command::new("wasm-tools");
                 embed.args([
                     "component",
                     "embed",
-                    wit_dir.to_str().unwrap(),
+                    embed_wit_dir.to_str().unwrap(),
                     core.to_str().unwrap(),
                     "--world",
                     &world,
@@ -319,6 +354,7 @@ pub fn build_moonbit_components(_force: bool) -> Result<()> {
                     embedded.to_str().unwrap(),
                 ]);
                 run_cmd(&mut embed, "wasm-tools component embed")?;
+                let _ = fs::remove_dir_all(&embed_wit_dir);
 
                 let mut new_comp = Command::new("wasm-tools");
                 new_comp.args([
