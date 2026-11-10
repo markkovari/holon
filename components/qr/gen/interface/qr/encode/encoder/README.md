@@ -1,0 +1,1 @@
+Encode text into a QR code in a few renderings.

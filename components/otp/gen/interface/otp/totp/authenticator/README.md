@@ -1,0 +1,1 @@
+Generate and verify TOTP/HOTP codes and recovery codes.

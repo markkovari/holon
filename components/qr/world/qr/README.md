@@ -1,0 +1,1 @@
+`qr` provides QR rendering (svg / unicode / matrix); pure compute.

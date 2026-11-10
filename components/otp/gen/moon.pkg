@@ -1,0 +1,30 @@
+import {
+  "otp/totp/gen/interface/otp/totp/authenticator" @authenticator,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportHotpAt:otp:totp/authenticator@0.1.0#hotp-at",
+        "wasmExportHotpAtPostReturn:cabi_post_otp:totp/authenticator@0.1.0#hotp-at",
+        "wasmExportProvision:otp:totp/authenticator@0.1.0#provision",
+        "wasmExportProvisionPostReturn:cabi_post_otp:totp/authenticator@0.1.0#provision",
+        "wasmExportRecoveryCodes:otp:totp/authenticator@0.1.0#recovery-codes",
+        "wasmExportRecoveryCodesPostReturn:cabi_post_otp:totp/authenticator@0.1.0#recovery-codes",
+        "wasmExportTotpAt:otp:totp/authenticator@0.1.0#totp-at",
+        "wasmExportTotpAtPostReturn:cabi_post_otp:totp/authenticator@0.1.0#totp-at",
+        "wasmExportTotpNow:otp:totp/authenticator@0.1.0#totp-now",
+        "wasmExportTotpNowPostReturn:cabi_post_otp:totp/authenticator@0.1.0#totp-now",
+        "wasmExportVerify:otp:totp/authenticator@0.1.0#verify"
+      ],
+    },
+  },
+)

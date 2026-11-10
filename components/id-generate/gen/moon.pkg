@@ -1,0 +1,29 @@
+import {
+  "id/generate/gen/interface/id/generate/generator" @generator,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportNanoid:id:generate/generator@0.1.0#nanoid",
+        "wasmExportNanoidPostReturn:cabi_post_id:generate/generator@0.1.0#nanoid",
+        "wasmExportShortCode:id:generate/generator@0.1.0#short-code",
+        "wasmExportShortCodePostReturn:cabi_post_id:generate/generator@0.1.0#short-code",
+        "wasmExportUlid:id:generate/generator@0.1.0#ulid",
+        "wasmExportUlidAt:id:generate/generator@0.1.0#ulid-at",
+        "wasmExportUlidAtPostReturn:cabi_post_id:generate/generator@0.1.0#ulid-at",
+        "wasmExportUlidPostReturn:cabi_post_id:generate/generator@0.1.0#ulid",
+        "wasmExportUuidV4:id:generate/generator@0.1.0#uuid-v4",
+        "wasmExportUuidV4PostReturn:cabi_post_id:generate/generator@0.1.0#uuid-v4"
+      ],
+    },
+  },
+)
