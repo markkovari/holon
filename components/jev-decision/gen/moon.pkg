@@ -1,0 +1,29 @@
+import {
+  "jev/decision/gen/interface/jev/decision/decision" @decision,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportChoose:jev:decision/decision@0.1.0#choose",
+        "wasmExportChoosePostReturn:cabi_post_jev:decision/decision@0.1.0#choose",
+        "wasmExportDescribe:jev:decision/decision@0.1.0#describe",
+        "wasmExportDescribePostReturn:cabi_post_jev:decision/decision@0.1.0#describe",
+        "wasmExportEvaluate:jev:decision/decision@0.1.0#evaluate",
+        "wasmExportEvaluatePostReturn:cabi_post_jev:decision/decision@0.1.0#evaluate",
+        "wasmExportGate:jev:decision/decision@0.1.0#gate",
+        "wasmExportGatePostReturn:cabi_post_jev:decision/decision@0.1.0#gate",
+        "wasmExportScore:jev:decision/decision@0.1.0#score",
+        "wasmExportScorePostReturn:cabi_post_jev:decision/decision@0.1.0#score"
+      ],
+    },
+  },
+)

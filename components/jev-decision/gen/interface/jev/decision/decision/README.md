@@ -1,0 +1,1 @@
+Discrete choice + scoring + binary gates, vendor-agnostic.
