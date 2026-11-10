@@ -36,13 +36,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "actor-entity"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1754,14 +1747,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "inproc-workflow"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "inspection-domain"
 version = "0.1.0"
 dependencies = [
@@ -3395,15 +3380,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "ticket-actor"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wit-bindgen-rt",
 ]
 
 [[package]]
