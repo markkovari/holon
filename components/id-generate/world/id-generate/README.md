@@ -1,0 +1,1 @@
+`id-generate` provides identifiers; clock for ULID time, random for entropy.

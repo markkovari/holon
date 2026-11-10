@@ -1,0 +1,25 @@
+import {
+  "qr/encode/gen/interface/qr/encode/encoder" @encoder,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportMatrix:qr:encode/encoder@0.1.0#matrix",
+        "wasmExportMatrixPostReturn:cabi_post_qr:encode/encoder@0.1.0#matrix",
+        "wasmExportSvg:qr:encode/encoder@0.1.0#svg",
+        "wasmExportSvgPostReturn:cabi_post_qr:encode/encoder@0.1.0#svg",
+        "wasmExportUnicode:qr:encode/encoder@0.1.0#unicode",
+        "wasmExportUnicodePostReturn:cabi_post_qr:encode/encoder@0.1.0#unicode"
+      ],
+    },
+  },
+)

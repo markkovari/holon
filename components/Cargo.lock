@@ -1599,13 +1599,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
-name = "id-generate"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "idempotency-guard"
 version = "0.1.0"
 dependencies = [
@@ -2309,15 +2302,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "otp"
-version = "0.1.0"
-dependencies = [
- "hmac",
- "sha1",
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "outbox"
 version = "0.1.0"
 dependencies = [
@@ -2697,20 +2681,6 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
-
-[[package]]
-name = "qr"
-version = "0.1.0"
-dependencies = [
- "qrcode",
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "qrcode"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"

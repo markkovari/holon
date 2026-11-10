@@ -1,0 +1,7 @@
+import {
+  "otp/totp/core" @core,
+  "otp/totp/interface/wasi/clocks/wall-clock" @wall_clock,
+  "otp/totp/interface/wasi/random/random" @random,
+}
+
+warnings = "-20-25-27-29-44-78"
