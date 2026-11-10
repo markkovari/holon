@@ -1,0 +1,6 @@
+import {
+  "email/template/engine" @engine,
+  "email/template/interface/wasi/keyvalue/store" @kv,
+}
+
+warnings = "-20-25-27-29-44-78"

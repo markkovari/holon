@@ -1,0 +1,1 @@
+Encode/decode opaque pagination cursors and assemble page envelopes.

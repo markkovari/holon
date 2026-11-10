@@ -1,0 +1,1 @@
+A model's answer, into fields an app can store.

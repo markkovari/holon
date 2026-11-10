@@ -1,0 +1,1 @@
+`card-identify` provides the parse; pure compute, no host imports.

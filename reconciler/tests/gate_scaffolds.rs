@@ -127,23 +127,16 @@ fn gate_jev_router() {
 
 #[test]
 fn gate_card_identify() {
-    let manifest = gatelib::repo_root().join("components/Cargo.toml");
-    let out = std::process::Command::new("cargo")
-        .args([
-            "test",
-            "--release",
-            "--manifest-path",
-            manifest.to_str().unwrap(),
-            "-p",
-            "card-identify",
-            "--test",
-            "guess",
-        ])
+    let card_dir = gatelib::repo_root().join("components/card-identify");
+    let out = std::process::Command::new("moon")
+        .arg("test")
+        .current_dir(card_dir)
         .output()
-        .expect("run card-identify guess test");
+        .expect("run card-identify moon test");
     assert!(
         out.status.success(),
-        "card-identify guess tests failed:\n{}",
+        "card-identify moon tests failed:\nSTDOUT:\n{}\nSTDERR:\n{}",
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
 }

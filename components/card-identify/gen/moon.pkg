@@ -1,0 +1,23 @@
+import {
+  "card/identify/gen/interface/card/identify/identifier" @identifier,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportParse:card:identify/identifier@0.1.0#parse",
+        "wasmExportParsePostReturn:cabi_post_card:identify/identifier@0.1.0#parse",
+        "wasmExportPrompt:card:identify/identifier@0.1.0#prompt",
+        "wasmExportPromptPostReturn:cabi_post_card:identify/identifier@0.1.0#prompt"
+      ],
+    },
+  },
+)

@@ -1,0 +1,25 @@
+import {
+  "email/template/gen/interface/email/template/renderer" @renderer,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportGetTemplate:email:template/renderer@0.1.0#get-template",
+        "wasmExportGetTemplatePostReturn:cabi_post_email:template/renderer@0.1.0#get-template",
+        "wasmExportPutTemplate:email:template/renderer@0.1.0#put-template",
+        "wasmExportPutTemplatePostReturn:cabi_post_email:template/renderer@0.1.0#put-template",
+        "wasmExportRender:email:template/renderer@0.1.0#render",
+        "wasmExportRenderPostReturn:cabi_post_email:template/renderer@0.1.0#render"
+      ],
+    },
+  },
+)

@@ -1,0 +1,1 @@
+`pagination` provides cursor codec + envelope; HMAC key from config.

@@ -1,0 +1,1 @@
+Weighted named-variant assignment, scoped by tenant.

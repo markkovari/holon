@@ -469,14 +469,6 @@ name = "capman"
 version = "0.1.0"
 
 [[package]]
-name = "card-identify"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -920,14 +912,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "email-render"
-version = "0.1.0"
-dependencies = [
- "base64",
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1017,13 +1001,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "experiment-assign"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2358,16 +2335,6 @@ dependencies = [
  "elliptic-curve",
  "primeorder",
  "sha2",
-]
-
-[[package]]
-name = "pagination"
-version = "0.1.0"
-dependencies = [
- "base64",
- "hmac",
- "sha2",
- "wit-bindgen-rt",
 ]
 
 [[package]]
