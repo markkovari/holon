@@ -1,0 +1,6 @@
+import {
+  "experiment/assign/core" @core,
+  "experiment/assign/interface/wasi/keyvalue/store" @kv,
+}
+
+warnings = "-20-25-27-29-44-78"

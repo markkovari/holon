@@ -1,0 +1,29 @@
+import {
+  "experiment/assign/gen/interface/experiment/assign/assigner" @assigner,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportAssign:experiment:assign/assigner@0.1.0#assign",
+        "wasmExportAssignPostReturn:cabi_post_experiment:assign/assigner@0.1.0#assign",
+        "wasmExportClearExperiment:experiment:assign/assigner@0.1.0#clear-experiment",
+        "wasmExportClearExperimentPostReturn:cabi_post_experiment:assign/assigner@0.1.0#clear-experiment",
+        "wasmExportCohort:experiment:assign/assigner@0.1.0#cohort",
+        "wasmExportCohortPostReturn:cabi_post_experiment:assign/assigner@0.1.0#cohort",
+        "wasmExportDescribe:experiment:assign/assigner@0.1.0#describe",
+        "wasmExportDescribePostReturn:cabi_post_experiment:assign/assigner@0.1.0#describe",
+        "wasmExportSetExperiment:experiment:assign/assigner@0.1.0#set-experiment",
+        "wasmExportSetExperimentPostReturn:cabi_post_experiment:assign/assigner@0.1.0#set-experiment"
+      ],
+    },
+  },
+)

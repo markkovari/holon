@@ -1,0 +1,1 @@
+Store and render transactional email templates.

@@ -1,0 +1,26 @@
+import {
+  "paginate/cursor/gen/interface/paginate/cursor/cursors" @cursors,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportBuildPage:paginate:cursor/cursors@0.1.0#build-page",
+        "wasmExportBuildPagePostReturn:cabi_post_paginate:cursor/cursors@0.1.0#build-page",
+        "wasmExportClampLimit:paginate:cursor/cursors@0.1.0#clamp-limit",
+        "wasmExportDecode:paginate:cursor/cursors@0.1.0#decode",
+        "wasmExportDecodePostReturn:cabi_post_paginate:cursor/cursors@0.1.0#decode",
+        "wasmExportEncode:paginate:cursor/cursors@0.1.0#encode",
+        "wasmExportEncodePostReturn:cabi_post_paginate:cursor/cursors@0.1.0#encode"
+      ],
+    },
+  },
+)
