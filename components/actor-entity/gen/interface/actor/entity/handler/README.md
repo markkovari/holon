@@ -1,0 +1,1 @@
+Interface that Actor implementations must export to receive messages.

@@ -1,0 +1,25 @@
+import {
+  "actor/entity/gen/interface/actor/entity/handler" @handler,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportOnMessage:actor:entity/handler@0.1.0#on-message",
+        "wasmExportOnMessagePostReturn:cabi_post_actor:entity/handler@0.1.0#on-message",
+        "wasmExportOnSnapshot:actor:entity/handler@0.1.0#on-snapshot",
+        "wasmExportOnSnapshotPostReturn:cabi_post_actor:entity/handler@0.1.0#on-snapshot",
+        "wasmExportOnSpawn:actor:entity/handler@0.1.0#on-spawn",
+        "wasmExportOnSpawnPostReturn:cabi_post_actor:entity/handler@0.1.0#on-spawn"
+      ],
+    },
+  },
+)

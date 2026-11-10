@@ -1,0 +1,25 @@
+import {
+  "inproc/workflow/gen/interface/durable/workflow/orchestrator" @orchestrator,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportStart:durable:workflow/orchestrator@0.1.0#start",
+        "wasmExportStartPostReturn:cabi_post_durable:workflow/orchestrator@0.1.0#start",
+        "wasmExportStatus:durable:workflow/orchestrator@0.1.0#status",
+        "wasmExportStatusPostReturn:cabi_post_durable:workflow/orchestrator@0.1.0#status",
+        "wasmExportTrigger:durable:workflow/orchestrator@0.1.0#trigger",
+        "wasmExportTriggerPostReturn:cabi_post_durable:workflow/orchestrator@0.1.0#trigger"
+      ],
+    },
+  },
+)
