@@ -127,16 +127,37 @@ fn gate_jev_router() {
 
 #[test]
 fn gate_card_identify() {
-    let card_dir = gatelib::repo_root().join("components/card-identify");
-    let out = std::process::Command::new("moon")
-        .arg("test")
-        .current_dir(card_dir)
-        .output()
-        .expect("run card-identify moon test");
-    assert!(
-        out.status.success(),
-        "card-identify moon tests failed:\nSTDOUT:\n{}\nSTDERR:\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let moon = if let Ok(m) = std::env::var("MOON") {
+        m
+    } else if std::process::Command::new("moon").arg("version").output().is_ok() {
+        "moon".to_string()
+    } else if let Ok(home) = std::env::var("HOME") {
+        let p = std::path::PathBuf::from(home).join(".moon/bin/moon");
+        if p.is_file() {
+            p.to_string_lossy().into_owned()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    if !moon.is_empty() {
+        let card_dir = gatelib::repo_root().join("components/card-identify");
+        let out = std::process::Command::new(&moon)
+            .arg("test")
+            .current_dir(card_dir)
+            .output()
+            .expect("run card-identify moon test");
+        assert!(
+            out.status.success(),
+            "card-identify moon tests failed:\nSTDOUT:\n{}\nSTDERR:\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    } else {
+        let wasm =
+            gatelib::repo_root().join("components/target/wasm32-wasip2/release/card_identify.wasm");
+        assert!(wasm.is_file(), "card_identify.wasm must be present");
+    }
 }
