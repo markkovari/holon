@@ -70,6 +70,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-edge-gateway"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "agent-matrix"
 version = "0.1.0"
 dependencies = [

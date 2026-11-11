@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     # `budget-domain` and `bench-suite-p3` are left out on purpose: each declares its own `[workspace]`.
     "guestfmt",
+    "agent-edge-gateway",
     "ai-inference",
     "ui-notifier",
     "desktop-notifier-domain",
