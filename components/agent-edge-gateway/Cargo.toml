@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 guestio = { path = "../guestio" }
