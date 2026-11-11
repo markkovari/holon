@@ -1,0 +1,18 @@
+[package]
+name = "agent-edge-gateway"
+description = "Serverless agent coordination and storage gateway for Cloudflare Workers & R2 (wasm32-wasip2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+guestio = { path = "../guestio" }
+wit-bindgen = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+hex = "0.4.3"

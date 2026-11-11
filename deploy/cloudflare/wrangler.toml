@@ -1,0 +1,13 @@
+name = "holon-agent-edge-gateway"
+main = "worker.ts"
+compatibility_date = "2026-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare R2 bucket binding for content-addressed chunks, commits, and refs
+[[r2_buckets]]
+binding = "AGENT_BUCKET"
+bucket_name = "holon-agent-lineage"
+
+[vars]
+ENVIRONMENT = "production"
+MAX_BODY_SIZE_MB = "32"
