@@ -2,5 +2,5 @@
 package holon:agent-edge-gateway@0.1.0;
 
 world gateway {
-    export wasi:http/handler@0.3.0-rc-2026-03-15;
+    export wasi:http/handler@0.3.0;
 }

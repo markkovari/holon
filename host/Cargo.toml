@@ -13,12 +13,10 @@ name = "holon-host"
 path = "src/main.rs"
 
 [dependencies]
-# PINNED TO 45 BY wrpc-runtime-wasmtime, not by choice.
-# wrpc 0.31 builds against 45 and two wasmtimes mean incompatible types; bump all four together with wrpc.
-wasmtime = { version = "45", features = ["component-model", "async"] }
-# `p3` is opt-in on 45 and implements the `0.3.0-rc-2026-03-15` WIT, so p3 guests build against that rc.
-wasmtime-wasi = { version = "45", features = ["p3"] }
-wasmtime-wasi-http = { version = "45", features = ["p3", "component-model-async"] }
+wasmtime = { version = "50", features = ["component-model", "async"] }
+# `p3` on 50 implements final `0.3.0`.
+wasmtime-wasi = { version = "50", features = ["p3"] }
+wasmtime-wasi-http = { version = "50", features = ["p3", "component-model-async"] }
 tokio = { workspace = true, features = ["net"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
@@ -48,9 +46,8 @@ url = "2"
 serde.workspace = true
 serde_json.workspace = true
 # Component-model value encoding with dynamic invocation, for binding unsatisfied imports at start.
-wrpc-runtime-wasmtime = "0.31"
-wrpc-transport-nats = "0.31"
-wrpc-transport = "0.29"
+wrpc-wasmtime = "0.1"
+wrpc-transport = "0.30"
 
 [dev-dependencies]
 tempfile.workspace = true

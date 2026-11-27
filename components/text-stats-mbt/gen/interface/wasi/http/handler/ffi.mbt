@@ -26,7 +26,7 @@ fn wasmExportAsyncHandleTaskReturn(
   p5 : Int32,
   p6 : Int32,
   p7 : Int32,
-) = "[export]wasi:http/handler@0.3.0-rc-2026-03-15" "[task-return]handle"
+) = "[export]wasi:http/handler@0.3.0" "[task-return]handle"
 
 ///|
 fn handle_task_return(

@@ -33,13 +33,12 @@ use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
 use wasmtime::component::{Component, HasSelf, Linker, Resource, ResourceTable};
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
+use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
-use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
-use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
-use wasmtime_wasi_http::p2::{HttpResult, WasiHttpCtxView, WasiHttpHooks, WasiHttpView};
-use wasmtime_wasi_http::WasiHttpCtx;
+use wasmtime_wasi_http::{
+    Error as HttpError, RequestOptions, WasiBody as HyperOutgoingBody, WasiHttpCtx,
+    WasiHttpCtxView, WasiHttpHooks, WasiHttpView,
+};
 
 mod bindings {
     wasmtime::component::bindgen!({
@@ -80,12 +79,12 @@ pub struct Instance {
     /// `None` for a plug: it serves its exports over the bus and has no route.
     pub(crate) pre: Option<HttpPre>,
     /// Remote-import clients, built at start to keep target lookup off the hot path.
-    pub remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
+    pub remotes: std::collections::BTreeMap<String, rpc::RpcClient>,
     /// Replicas asked for. One `InstancePre` serves them all; tracked because the reconciler counts per node.
     pub count: u32,
 }
 
-/// The HTTP door, p2 `incoming-handler@0.2` or p3 `handler@0.3.0-rc`, picked from the component itself.
+/// The HTTP door, p2 `incoming-handler@0.2` or p3 `handler@0.3.0`, picked from the component itself.
 #[derive(Clone)]
 pub(crate) enum HttpPre {
     P2(ProxyPre<Host>),
@@ -99,47 +98,124 @@ type P3Handler = wasmtime_wasi_http::handler::ProxyHandler<P3Stores>;
 /// so its secret cache and memory cap span them (ADR-0037's per-request rule is p2 only).
 pub(crate) struct P3Stores {
     engine: Arc<Engine>,
+    pre: wasmtime_wasi_http::p3::bindings::ServicePre<Host>,
     scope: SharedScope,
     kv: Kv,
     cache_backing: CacheBacking,
-    remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
+    remotes: std::collections::BTreeMap<String, rpc::RpcClient>,
     platform_url: String,
+}
+
+struct P3Expiration {
+    idle_timeout: std::time::Duration,
+    request_timeout: std::time::Duration,
+    sleep: std::pin::Pin<Box<tokio::time::Sleep>>,
+    deadline: Option<std::time::Instant>,
+}
+
+impl P3Expiration {
+    fn new(idle_timeout: std::time::Duration, request_timeout: std::time::Duration) -> Self {
+        Self {
+            idle_timeout,
+            request_timeout,
+            sleep: Box::pin(tokio::time::sleep(idle_timeout)),
+            deadline: None,
+        }
+    }
+}
+
+impl wasmtime_wasi_http::handler::WorkerExpiration for P3Expiration {
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        state: wasmtime_wasi_http::handler::WorkerStatus,
+        start: std::time::Instant,
+    ) -> std::task::Poll<()> {
+        let timeout = match state {
+            wasmtime_wasi_http::handler::WorkerStatus::Idle => self.idle_timeout,
+            wasmtime_wasi_http::handler::WorkerStatus::Requests
+            | wasmtime_wasi_http::handler::WorkerStatus::PostReturn => self.request_timeout,
+        };
+        let target = start + timeout;
+        if std::time::Instant::now() >= target {
+            return std::task::Poll::Ready(());
+        }
+        if self.deadline != Some(target) {
+            self.deadline = Some(target);
+            self.sleep.as_mut().reset(tokio::time::Instant::from_std(target));
+        }
+        std::future::Future::poll(self.sleep.as_mut(), cx)
+    }
+}
+
+struct P3WorkerState {
+    scope_id: String,
+}
+
+impl wasmtime_wasi_http::handler::WorkerState for P3WorkerState {
+    type StoreData = Host;
+    type RequestData = SharedScope;
+
+    fn should_accept_request(
+        &self,
+        concurrent_count: usize,
+        total_count: usize,
+    ) -> wasmtime_wasi_http::handler::ShouldAccept {
+        // `wasmtime serve`'s p3 defaults.
+        if total_count >= 128 {
+            wasmtime_wasi_http::handler::ShouldAccept::Never
+        } else if concurrent_count >= 16 {
+            wasmtime_wasi_http::handler::ShouldAccept::No
+        } else {
+            wasmtime_wasi_http::handler::ShouldAccept::Yes
+        }
+    }
+
+    fn on_request_start(
+        &self,
+        mut store: wasmtime::StoreContextMut<'_, Self::StoreData>,
+        scope: Self::RequestData,
+        _task_group: wasmtime::component::TaskGroupId,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'static + Send + Sync>> {
+        let timeout = std::time::Duration::from_millis(scope.request_timeout_ms);
+        store.data_mut().set_scope(scope);
+        Box::pin(tokio::time::sleep(timeout))
+    }
+
+    fn drop(&self, _store: Store<Self::StoreData>, result: wasmtime::Result<(), wasmtime::Error>) {
+        if let Err(error) = result {
+            eprintln!("comp-host: {} p3 worker: {error:?}", self.scope_id);
+        }
+    }
 }
 
 impl wasmtime_wasi_http::handler::HandlerState for P3Stores {
     type StoreData = Host;
-    fn new_store(
+    type WorkerExpiration = P3Expiration;
+    type WorkerState = P3WorkerState;
+
+    async fn instantiate(
         &self,
-        _req_id: Option<u64>,
-    ) -> wasmtime::Result<wasmtime_wasi_http::handler::StoreBundle<Host>> {
-        Ok(wasmtime_wasi_http::handler::StoreBundle {
-            store: store_for(
-                &self.engine,
-                self.scope.clone(),
-                self.kv.clone(),
-                self.cache_backing.clone(),
-                self.remotes.clone(),
-                self.platform_url.clone(),
-            ),
-            write_profile: Box::new(|_| {}),
+    ) -> wasmtime::Result<
+        wasmtime_wasi_http::handler::Instance<Host, Self::WorkerExpiration, Self::WorkerState>,
+    > {
+        let mut store = store_for(
+            &self.engine,
+            self.scope.clone(),
+            self.kv.clone(),
+            self.cache_backing.clone(),
+            self.remotes.clone(),
+            self.platform_url.clone(),
+        );
+        let service = self.pre.instantiate_async(&mut store).await?;
+        let request_timeout = std::time::Duration::from_millis(self.scope.request_timeout_ms);
+        Ok(wasmtime_wasi_http::handler::Instance {
+            store,
+            proxy: wasmtime_wasi_http::handler::Proxy::P3(service),
+            view: Host::http,
+            expiration: P3Expiration::new(std::time::Duration::from_secs(1), request_timeout),
+            state: P3WorkerState { scope_id: self.scope.id().to_string() },
         })
-    }
-    // Per-request wall-clock timeout from the component's scope.
-    fn request_timeout(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(self.scope.request_timeout_ms)
-    }
-    // `wasmtime serve`'s p3 defaults.
-    fn idle_instance_timeout(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(1)
-    }
-    fn max_instance_reuse_count(&self) -> usize {
-        128
-    }
-    fn max_instance_concurrent_reuse_count(&self) -> usize {
-        16
-    }
-    fn handle_worker_error(&self, error: wasmtime::Error) {
-        eprintln!("comp-host: {} p3 worker: {error:?}", self.scope.id());
     }
 }
 
@@ -190,11 +266,11 @@ impl Host {
     }
 }
 
-impl wrpc_runtime_wasmtime::WrpcView for Host {
+impl wrpc_wasmtime::WrpcView for Host {
     type Invoke = rpc::Transport;
 
-    fn wrpc(&mut self) -> wrpc_runtime_wasmtime::WrpcCtxView<'_, Self::Invoke> {
-        wrpc_runtime_wasmtime::WrpcCtxView { ctx: &mut self.rpc, table: &mut self.table }
+    fn wrpc(&mut self) -> wrpc_wasmtime::WrpcCtxView<'_, Self::Invoke> {
+        wrpc_wasmtime::WrpcCtxView { ctx: &mut self.rpc, table: &mut self.table }
     }
 }
 
@@ -210,15 +286,6 @@ impl WasiView for Host {
 impl WasiHttpView for Host {
     fn http(&mut self) -> WasiHttpCtxView<'_> {
         WasiHttpCtxView { ctx: &mut self.http, table: &mut self.table, hooks: &mut self.hooks }
-    }
-}
-impl wasmtime_wasi_http::p3::WasiHttpView for Host {
-    fn http(&mut self) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
-        wasmtime_wasi_http::p3::WasiHttpCtxView {
-            ctx: &mut self.http,
-            table: &mut self.table,
-            hooks: &mut self.hooks,
-        }
     }
 }
 
@@ -546,103 +613,29 @@ struct Egress {
     scope: SharedScope,
 }
 
+type HttpIo =
+    Box<dyn std::future::Future<Output = wasmtime_wasi_http::Result<(), HttpError>> + Send>;
+
 impl WasiHttpHooks for Egress {
     /// The default of 1 deadlocks a guest that writes a many-KB body before calling `handle` (hit at ~8 KB).
-    fn outgoing_body_buffer_chunks(&mut self) -> usize {
+    fn p2_outgoing_body_buffer_chunks(&mut self) -> usize {
         8192
     }
 
     fn send_request(
         &mut self,
         request: hyper::Request<HyperOutgoingBody>,
-        config: OutgoingRequestConfig,
-    ) -> HttpResult<HostFutureIncomingResponse> {
-        let authority = request
-            .uri()
-            .authority()
-            .map(|a| a.as_str().to_string())
-            .or_else(|| {
-                request
-                    .headers()
-                    .get(hyper::header::HOST)
-                    .and_then(|h| h.to_str().ok())
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
-
-        // Fail closed before any connection opens.
-        if !self.scope.egress.permits_authority(&authority) {
-            eprintln!(
-                "comp-host: {} denied egress to {authority:?} (not on its allow-list)",
-                self.scope.id()
-            );
-            return Err(ErrorCode::HttpRequestDenied.into());
-        }
-
-        let scope = self.scope.clone();
-        let port = if config.use_tls { 443 } else { 80 };
-        let trace = std::env::var_os("COMP_TRACE_EGRESS").is_some();
-        let who = scope.id();
-        let handle = wasmtime_wasi::runtime::spawn(async move {
-            let target = if authority.contains(':') {
-                authority.clone()
-            } else {
-                format!("{authority}:{port}")
-            };
-            match resolved_addrs_permitted(&scope, &target).await {
-                Ok(()) => {}
-                Err(AddrDenied::Prohibited) => return Ok(Err(ErrorCode::DestinationIpProhibited)),
-                Err(AddrDenied::Unresolvable) => return Ok(Err(ErrorCode::DestinationUnavailable)),
-            }
-            if trace {
-                eprintln!("comp-host: [egress] {who} dialing {target} (tls={})", config.use_tls);
-            }
-            // ponytail: the connect re-resolves, so DNS rebinding can still land on a denied address;
-            // pin the connector to the checked address if egress ever guards something worth a rebind.
-            // Buffered through reqwest, not wasmtime's streaming handler: that stalled against a real TLS remote
-            // (headers arrived, body never did). The cost is holding the response in memory.
-            let scheme = if config.use_tls { "https" } else { "http" };
-            let t0 = std::time::Instant::now();
-            let out = reqwest_send(scheme, &authority, request, &config).await;
-            if trace {
-                let ms = t0.elapsed().as_millis();
-                match &out {
-                    Ok(r) => eprintln!(
-                        "comp-host: [egress] {who} {target} -> {} in {ms}ms",
-                        r.resp.status()
-                    ),
-                    Err(e) => {
-                        eprintln!("comp-host: [egress] {who} {target} -> ERROR in {ms}ms {e:?}")
-                    }
-                }
-            }
-            Ok(out)
-        });
-        Ok(HostFutureIncomingResponse::pending(handle))
-    }
-}
-
-/// p3 egress: same two checks and buffered fetch as p2; must be overridden, upstream's default is unrestricted.
-type P3Body = http_body_util::combinators::UnsyncBoxBody<bytes::Bytes, P3ErrorCode>;
-type P3ErrorCode = wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
-type P3Io = Box<dyn std::future::Future<Output = Result<(), P3ErrorCode>> + Send>;
-
-impl wasmtime_wasi_http::p3::WasiHttpHooks for Egress {
-    fn send_request(
-        &mut self,
-        request: hyper::Request<P3Body>,
-        options: Option<wasmtime_wasi_http::p3::RequestOptions>,
-        _fut: P3Io,
+        options: Option<RequestOptions>,
+        _fut: HttpIo,
     ) -> Box<
         dyn std::future::Future<
-                Output = Result<
-                    (hyper::Response<P3Body>, P3Io),
-                    wasmtime_wasi::TrappableError<P3ErrorCode>,
-                >,
+                Output = wasmtime_wasi_http::Result<(hyper::Response<HyperOutgoingBody>, HttpIo)>,
             > + Send,
     > {
         use http_body_util::{BodyExt, Full};
         let scope = self.scope.clone();
+        let trace = std::env::var_os("COMP_TRACE_EGRESS").is_some();
+        let who = scope.id().to_string();
         Box::new(async move {
             let authority = request
                 .uri()
@@ -656,12 +649,13 @@ impl wasmtime_wasi_http::p3::WasiHttpHooks for Egress {
                         .map(str::to_string)
                 })
                 .unwrap_or_default();
+            // Fail closed before any connection opens.
             if !scope.egress.permits_authority(&authority) {
                 eprintln!(
                     "comp-host: {} denied egress to {authority:?} (not on its allow-list)",
                     scope.id()
                 );
-                return Err(P3ErrorCode::HttpRequestDenied.into());
+                return Err(HttpError::HttpRequestDenied);
             }
             let tls = request.uri().scheme_str() != Some("http");
             let target = if authority.contains(':') {
@@ -671,15 +665,15 @@ impl wasmtime_wasi_http::p3::WasiHttpHooks for Egress {
             };
             match resolved_addrs_permitted(&scope, &target).await {
                 Ok(()) => {}
-                Err(AddrDenied::Prohibited) => {
-                    return Err(P3ErrorCode::DestinationIpProhibited.into())
-                }
-                Err(AddrDenied::Unresolvable) => {
-                    return Err(P3ErrorCode::DestinationUnavailable.into())
-                }
+                Err(AddrDenied::Prohibited) => return Err(HttpError::DestinationIpProhibited),
+                Err(AddrDenied::Unresolvable) => return Err(HttpError::DestinationUnavailable),
             }
+            if trace {
+                eprintln!("comp-host: [egress] {who} dialing {target} (tls={tls})");
+            }
+            let t0 = std::time::Instant::now();
             let (parts, body) = request.into_parts();
-            let body = body.collect().await.map_err(|_| P3ErrorCode::HttpRequestBodySize(None))?;
+            let body = body.collect().await.map_err(|_| HttpError::HttpRequestBodySize(None))?;
             // wasmtime's p2 defaults, for a guest that set no timeouts.
             let default = std::time::Duration::from_secs(600);
             let opts = options.unwrap_or_default();
@@ -692,45 +686,20 @@ impl wasmtime_wasi_http::p3::WasiHttpHooks for Egress {
                 opts.first_byte_timeout.unwrap_or(default),
             )
             .await
-            .map_err(|e| P3ErrorCode::InternalError(Some(e)))?
-            .map(|b| Full::new(b).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync());
-            Ok((resp, Box::new(async { Ok(()) }) as P3Io))
+            .map_err(|e| HttpError::InternalError(Some(e)))?;
+            if trace {
+                eprintln!(
+                    "comp-host: [egress] {who} {target} -> {} in {}ms",
+                    resp.status(),
+                    t0.elapsed().as_millis()
+                );
+            }
+            let resp = resp.map(|b| {
+                Full::new(b).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync()
+            });
+            Ok((resp, Box::new(async { Ok(()) }) as HttpIo))
         })
     }
-}
-
-/// Buffered fully by reqwest, so the guest gets a finished body with no background worker to stall.
-async fn reqwest_send(
-    scheme: &str,
-    authority: &str,
-    request: hyper::Request<HyperOutgoingBody>,
-    config: &OutgoingRequestConfig,
-) -> Result<wasmtime_wasi_http::p2::types::IncomingResponse, ErrorCode> {
-    use http_body_util::{BodyExt, Full};
-
-    let (parts, body) = request.into_parts();
-    let body_bytes = body
-        .collect()
-        .await
-        .map(|c| c.to_bytes())
-        .map_err(|_| ErrorCode::HttpRequestBodySize(None))?;
-    let resp = reqwest_fetch(
-        scheme,
-        authority,
-        parts,
-        body_bytes,
-        config.connect_timeout,
-        config.first_byte_timeout,
-    )
-    .await
-    .map_err(|e| ErrorCode::InternalError(Some(e)))?
-    .map(|bytes| Full::new(bytes).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync());
-
-    Ok(wasmtime_wasi_http::p2::types::IncomingResponse {
-        resp,
-        worker: None,
-        between_bytes_timeout: config.between_bytes_timeout,
-    })
 }
 
 enum AddrDenied {
@@ -1568,7 +1537,7 @@ fn wasi_ctx(scope: &SharedScope) -> WasiCtx {
     b.inherit_stderr().allow_tcp(true).allow_udp(false).allow_ip_name_lookup(true);
     for d in DIRS.get().into_iter().flatten() {
         let at = d.to_string_lossy();
-        if let Err(e) = b.preopened_dir(d, &at, DirPerms::all(), FilePerms::all()) {
+        if let Err(e) = b.preopened_dir(d, &at, FsPerms::ReadWrite) {
             eprintln!("comp-host: cannot open {at} to the app: {e}");
         }
     }
@@ -1588,7 +1557,7 @@ pub(crate) fn store_for(
     scope: SharedScope,
     kv: Kv,
     cache_backing: CacheBacking,
-    remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
+    remotes: std::collections::BTreeMap<String, rpc::RpcClient>,
     // Empty in solo mode, where nothing is granted.
     platform_url: String,
 ) -> Store<Host> {
@@ -1662,17 +1631,15 @@ async fn handle_request(
         Some(HttpPre::P3(pre, handler)) => {
             let timeout = std::time::Duration::from_millis(active_scope.request_timeout_ms);
             let handler = handler.get_or_init(|| {
-                wasmtime_wasi_http::handler::ProxyHandler::new(
-                    P3Stores {
-                        engine: engine.clone(),
-                        scope: instance.scope.clone(),
-                        kv: kv.clone(),
-                        cache_backing: instance.cache_backing.clone(),
-                        remotes: instance.remotes.clone(),
-                        platform_url: platform_url.clone(),
-                    },
-                    wasmtime_wasi_http::handler::ProxyPre::P3(pre.clone()),
-                )
+                wasmtime_wasi_http::handler::ProxyHandler::new(P3Stores {
+                    engine: engine.clone(),
+                    pre: pre.clone(),
+                    scope: instance.scope.clone(),
+                    kv: kv.clone(),
+                    cache_backing: instance.cache_backing.clone(),
+                    remotes: instance.remotes.clone(),
+                    platform_url: platform_url.clone(),
+                })
             });
             let mut resp = handle_request_p3(handler, req, active_scope, timeout).await?;
             if let Some(ref t) = ambient_tenant {
@@ -1744,58 +1711,24 @@ async fn handle_request_p3(
     timeout: std::time::Duration,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
     use http_body_util::BodyExt;
-    use wasmtime_wasi_http::handler::Proxy;
-    use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode as P3Error;
-    use wasmtime_wasi_http::p3::Request;
 
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let (err_tx, err_rx) = tokio::sync::oneshot::channel::<wasmtime::Error>();
-    handler.spawn(
-        None,
-        Box::new(move |acc, proxy| {
-            Box::pin(async move {
-                let _: Result<(), wasmtime::Error> = acc.with(|mut s| {
-                    s.data_mut().set_scope(scope);
-                    Ok(())
-                });
-                let Proxy::P3(service) = proxy else { unreachable!("P3 handler") };
-                let run = async {
-                    let req = req.map(|b| b.map_err(P3Error::from_hyper_request_error));
-                    let (request, io) = Request::from_http(req);
-                    let res = service
-                        .handle(acc, request)
-                        .await?
-                        .map_err(|e| wasmtime::format_err!("guest returned error-code {e:?}"))?;
-                    let res = acc.with(|mut s| res.into_http(&mut s, io))?;
-                    // Dropped by hyper once the body is fully sent — until then this
-                    // task, and so the instance the body streams out of, stays busy.
-                    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
-                    let res = res.map(|body| {
-                        DropSignal { body: body.boxed_unsync(), _done: done_tx }.boxed_unsync()
-                    });
-                    if tx.send(res).is_ok() {
-                        let _ = done_rx.await;
-                    }
-                    wasmtime::Result::<()>::Ok(())
-                };
-                if let Err(e) = run.await {
-                    let _ = err_tx.send(e);
-                }
-            })
-        }),
-    );
-    match tokio::time::timeout(timeout, rx).await {
-        Ok(Ok(res)) => Ok(res.map(|b| {
-            b.map_err(|e| {
-                wasmtime_wasi_http::p2::bindings::http::types::ErrorCode::InternalError(Some(
-                    format!("{e:?}"),
-                ))
-            })
-            .boxed_unsync()
-        })),
-        Ok(Err(_)) => {
-            Err(anyhow::anyhow!("guest never produced a response: {:?}", err_rx.await.ok()))
+    let req = req.map(|b| b.map_err(HttpError::from).boxed_unsync());
+    match tokio::time::timeout(timeout, handler.handle(scope, req)).await {
+        Ok(Ok(res)) => Ok(res),
+        Ok(Err(e)) if e.is::<wasmtime_wasi_http::handler::ExpirationError>() => {
+            let mut resp = hyper::Response::new(
+                http_body_util::Full::new(bytes::Bytes::from_static(b"gateway timeout\n"))
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+            );
+            *resp.status_mut() = hyper::StatusCode::GATEWAY_TIMEOUT;
+            resp.headers_mut().insert(
+                hyper::header::CONTENT_TYPE,
+                hyper::header::HeaderValue::from_static("text/plain"),
+            );
+            Ok(resp)
         }
+        Ok(Err(e)) => Err(anyhow::anyhow!("guest never produced a response: {e:?}")),
         Err(_) => {
             let mut resp = hyper::Response::new(
                 http_body_util::Full::new(bytes::Bytes::from_static(b"gateway timeout\n"))
@@ -1809,29 +1742,6 @@ async fn handle_request_p3(
             );
             Ok(resp)
         }
-    }
-}
-
-/// A body that signals, by being dropped, that hyper is done with it.
-struct DropSignal<B> {
-    body: B,
-    _done: tokio::sync::oneshot::Sender<()>,
-}
-
-impl<B: hyper::body::Body + Unpin> hyper::body::Body for DropSignal<B> {
-    type Data = B::Data;
-    type Error = B::Error;
-    fn poll_frame(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
-        std::pin::Pin::new(&mut self.body).poll_frame(cx)
-    }
-    fn is_end_stream(&self) -> bool {
-        self.body.is_end_stream()
-    }
-    fn size_hint(&self) -> hyper::body::SizeHint {
-        self.body.size_hint()
     }
 }
 
