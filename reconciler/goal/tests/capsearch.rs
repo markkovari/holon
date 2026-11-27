@@ -151,7 +151,7 @@ const DELIBERATE: &[(&str, &str)] = &[
          implementations at composition time without code changes.",
     ),
     (
-        "analytics:telemetry/tracker",
+        "analytics:telemetry/ingest",
         "swappable analytics backend boundary (`kv-analytics` vs `posthog-analytics`).",
     ),
     (
