@@ -1,0 +1,46 @@
+# Paved-road E2E SDLC Deliverable Manifest — Pet-Clinic
+#
+# Tracks a single pet-clinic capability change from goal -> gate -> stg ->
+# A/B experiment -> gradual rollout -> promotion (or automatic rollback).
+#
+# Build the candidate variant on-demand in MoonBit (<200ms, ~11 KB .wasm):
+#   tools/moonbit-variant.sh create triage-v2-senior-care --vip-discount-pct 20 --senior-age 7
+
+[deliverable]
+project = "pet-clinic"
+name = "senior-triage-v2"
+capability = "clinic:triage/evaluator@0.1.0"
+goal_ref = "goal/pet-clinic-senior-triage"
+initial_stage = "stg"
+
+[variants.control]
+id = "triage-v1-mbt"
+role = "control"
+language = "moonbit"
+source = "components/clinic-triage"
+weight = 50
+
+[variants.candidate]
+id = "triage-v2-senior-care"
+role = "candidate"
+language = "moonbit"
+build_cmd = "tools/moonbit-variant.sh create triage-v2-senior-care --vip-discount-pct 20 --senior-age 7"
+weight = 50
+
+[variants.candidate.strategy_params]
+vip_discount_pct = 20
+senior_age = 7
+avian_specialist = "dr-avian-specialist"
+
+[wiring]
+# Parallel stg: these tenants, cohorts, or X-Holon-Stage: stg requests hit
+# the candidate component while prod traffic stays on control.
+stg_tenants = ["pilot-clinic"]
+stg_cohorts = ["internal", "beta-vets"]
+allow_stage_header = true
+rollout_steps = [10, 25, 50, 100]
+
+[guardrails]
+max_error_rate = 0.05
+min_exposures = 10
+min_lift = 0.02

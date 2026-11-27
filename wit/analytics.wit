@@ -1,0 +1,159 @@
+// analytics:telemetry — universal, vendor-agnostic product & SDLC analytics contract.
+//
+// Any analytics backend (self-hosted PostHog, Plausible, Umami, Mixpanel,
+// Amplitude, ClickHouse, or an in-memory test double) can export `ingest`
+// and/or `query`. Consumers (such as `delivery-domain`, dashboards, or
+// post-release judges) import only this WIT and stay 100% backend-agnostic:
+// swapping PostHog for another provider is a compose-time `wac plug` change,
+// never a code rewrite.
+package analytics:telemetry@0.1.0;
+
+/// Shared types for event capture, time-series, funnels, and A/B attribution.
+interface types {
+    /// A flat string key/value property attached to an event or filter.
+    record property {
+        key: string,
+        value: string,
+    }
+
+    /// Inclusive-start, exclusive-end Unix timestamp window (seconds).
+    /// `to-unix = 0` means "now" on the provider's clock.
+    record time-window {
+        from-unix: u64,
+        to-unix: u64,
+    }
+
+    /// One analytics event to capture.
+    record event {
+        name: string,
+        distinct-id: string,
+        /// Logical project / app name (e.g. "pet-clinic").
+        project: string,
+        /// Unix seconds (0 = let the backend stamp server time).
+        timestamp-unix: u64,
+        properties: list<property>,
+    }
+
+    /// Filter selecting events for counts, trends, and breakdowns.
+    record event-filter {
+        event-name: string,
+        project: string,
+        property-filters: list<property>,
+        window: time-window,
+    }
+
+    /// Time-series aggregation granularity.
+    enum interval {
+        hour,
+        day,
+        week,
+    }
+
+    /// One bucket in a time-series response.
+    record series-point {
+        bucket-unix: u64,
+        count: u64,
+        unique-users: u64,
+    }
+
+    /// One ordered step in a conversion funnel query.
+    record funnel-step {
+        event-name: string,
+        property-filters: list<property>,
+    }
+
+    /// Observed counts and step-to-step conversion rate for a funnel step.
+    record funnel-stage-result {
+        event-name: string,
+        count: u64,
+        unique-users: u64,
+        /// Conversion rate relative to step 0 (0.0..=1.0).
+        conversion-rate: f64,
+    }
+
+    /// Query parameters for pulling per-variant A/B or rollout metrics.
+    record experiment-query {
+        project: string,
+        experiment-key: string,
+        /// e.g. "$feature_flag_called" or "triage_served"
+        exposure-event: string,
+        /// e.g. "visit_booked" or "converted"
+        conversion-event: string,
+        /// e.g. "triage_error" (empty string to skip error counting)
+        error-event: string,
+        /// Event property holding the variant name (e.g. "variant_id" or "$feature/flag")
+        variant-property: string,
+        /// Expected variant names to summarize (empty = discover dynamically).
+        variants: list<string>,
+        window: time-window,
+    }
+
+    /// Aggregated exposure, conversion, and error metrics for one experiment arm.
+    record variant-summary {
+        arm: string,
+        exposures: u64,
+        conversions: u64,
+        errors: u64,
+        unique-users: u64,
+        conversion-rate: f64,
+        error-rate: f64,
+    }
+
+    /// Why an analytics operation failed.
+    variant analytics-error {
+        /// Missing or invalid API key / token.
+        unauthorized,
+        /// Upstream analytics backend throttled the request.
+        rate-limited,
+        /// Malformed query or invalid property/filter.
+        invalid-query(string),
+        /// Upstream analytics host was unreachable or returned 5xx.
+        backend-unavailable(string),
+        /// This provider does not support the requested query shape.
+        not-supported(string),
+    }
+}
+
+/// Write-side event ingestion and user identification.
+interface ingest {
+    use types.{analytics-error, event, property};
+
+    /// Capture a single event.
+    capture: func(ev: event) -> result<_, analytics-error>;
+
+    /// Capture a batch of events; returns the number accepted.
+    capture-batch: func(events: list<event>) -> result<u32, analytics-error>;
+
+    /// Associate traits with a distinct user/subject id.
+    identify: func(distinct-id: string, traits: list<property>) -> result<_, analytics-error>;
+}
+
+/// Read-side analytics queries for dashboards, funnels, and post-release SDLC judges.
+interface query {
+    use types.{
+        analytics-error, event-filter, experiment-query, funnel-stage-result, funnel-step,
+        interval, series-point, time-window, variant-summary,
+    };
+
+    /// Total event count matching `filter`.
+    count: func(filter: event-filter) -> result<u64, analytics-error>;
+
+    /// Distinct user (`distinct-id`) count matching `filter`.
+    unique-users: func(filter: event-filter) -> result<u64, analytics-error>;
+
+    /// Bucketed event & unique-user counts over `filter.window`.
+    timeseries: func(filter: event-filter, bucket: interval)
+        -> result<list<series-point>, analytics-error>;
+
+    /// Multi-step conversion funnel over `window`.
+    funnel: func(project: string, steps: list<funnel-step>, window: time-window)
+        -> result<list<funnel-stage-result>, analytics-error>;
+
+    /// Per-variant exposures, conversions, errors, and rates for an experiment or rollout.
+    experiment-results: func(req: experiment-query)
+        -> result<list<variant-summary>, analytics-error>;
+
+    /// Top-N breakdown of events matching `filter` grouped by `property-key`.
+    breakdown: func(filter: event-filter, property-key: string, limit: u32)
+        -> result<list<tuple<string, u64>>, analytics-error>;
+}

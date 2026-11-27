@@ -1,0 +1,1 @@
+Pure-compute triage capability exported by each MoonBit variant.

@@ -1,0 +1,45 @@
+// clinic:triage — strategically swappable pet-clinic visit triage & pricing.
+//
+// Pure compute capability with zero host imports, designed to be authored and
+// compiled on-demand in MoonBit (<1s, ~20 KB .wasm). Multiple implementations
+// (control v1, candidate v2, or any on-demand variant) satisfy this exact WIT
+// contract and are wired per user context by the delivery SDLC controller.
+package clinic:triage@0.1.0;
+
+/// Evaluate a pet-clinic visit request and return triage priority, fee, and guidance.
+interface evaluator {
+    /// User + visit context used to evaluate triage and pricing.
+    record visit-context {
+        species: string,
+        age-years: u32,
+        minutes: u32,
+        symptoms: string,
+        owner-tier: string,
+        tenant: string,
+    }
+
+    /// Triage and pricing decision returned by the active component variant.
+    record triage-decision {
+        /// "routine" | "priority" | "urgent" | "emergency"
+        priority: string,
+        /// Visit fee in minor currency units (cents).
+        fee-cents: u64,
+        /// Suggested vet specialization or assignee.
+        recommended-vet: string,
+        /// Human-readable care recommendation.
+        recommendation: string,
+        /// Identifier of the component variant that produced this decision.
+        variant-id: string,
+    }
+
+    /// Evaluate a pet visit and produce a triage + pricing decision.
+    evaluate: func(ctx: visit-context) -> triage-decision;
+
+    /// Describe this variant (name, version, strategy summary).
+    variant-info: func() -> string;
+}
+
+/// Pure-compute triage capability exported by each MoonBit variant.
+world clinic-triage {
+    export evaluator;
+}

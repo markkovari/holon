@@ -1,0 +1,15 @@
+// kv:analytics — local KV-backed provider for `analytics:telemetry@0.1.0`.
+//
+// Satisfies the exact same universal contract as `posthog-analytics`, backed
+// by `metrics:collect/collector@0.1.0` so offline/local apps and tests work
+// without an external analytics server. Swap to `posthog-analytics` at compose
+// time via `wac plug` with zero code changes in any consumer.
+package kv:analytics@0.1.0;
+
+world kv-analytics {
+    export analytics:telemetry/types@0.1.0;
+    export analytics:telemetry/ingest@0.1.0;
+    export analytics:telemetry/query@0.1.0;
+
+    import metrics:collect/collector@0.1.0;
+}

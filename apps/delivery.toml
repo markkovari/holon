@@ -1,0 +1,8 @@
+name = "delivery"
+domain = "delivery.example.com"
+artifact = "components/target/delivery_domain.composed.wasm"
+kv = "sqlite"
+
+[triggers]
+pump = "/api/tick"
+interval = 10

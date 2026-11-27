@@ -1,0 +1,16 @@
+[package]
+name = "vet-booking-domain"
+description = "Meadowbrook Vet Clinic booking portal (1-page form vs 3-step wizard), decoupled from delivery-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+guestio = { path = "../guestio" }
+wit-bindgen = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

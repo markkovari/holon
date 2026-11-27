@@ -1,0 +1,1 @@
+Evaluate a pet-clinic visit request and return triage priority, fee, and guidance.

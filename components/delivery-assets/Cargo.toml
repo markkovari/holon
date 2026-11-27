@@ -1,0 +1,13 @@
+[package]
+name = "delivery-assets"
+description = "Multi-project live SSE SDLC dashboard embedded as ui:assets/files@0.1.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }

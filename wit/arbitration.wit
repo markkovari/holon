@@ -1,0 +1,78 @@
+// delivery:arbitration — multi-rollout concurrency arbitration and collision detection.
+//
+// Pure compute contract (no host imports) that decides which deliverables in a
+// project may advance into live traffic (`ab_test` / `rollout`) and which must
+// wait under the project's active release strategy.
+package delivery:arbitration@0.1.0;
+
+interface arbiter {
+    /// Strategy governing concurrent rollouts within one project.
+    enum release-strategy {
+        /// Strict per-capability FIFO queue ordered by `created-at`.
+        fifo,
+        /// Only deliverables explicitly listed in `picked-ids` may advance.
+        human-pick,
+        /// Unrestricted parallel rollouts (still reports collision warnings).
+        free-for-all,
+        /// Assigns disjoint subject hash slices so users never see overlapping tests.
+        mutually-exclusive-layers,
+        /// Higher-priority deliverables (lower number = higher urgency) preempt lower ones.
+        priority-preempt,
+        /// Synchronized release train; halts all members if any member rolls back.
+        train-batch,
+    }
+
+    /// Minimal deliverable view needed for arbitration.
+    record contender {
+        id: string,
+        capability: string,
+        stage: string,
+        created-at: u64,
+        priority: u32,
+    }
+
+    /// Per-project release arbitration policy.
+    record project-policy {
+        project: string,
+        strategy: release-strategy,
+        max-concurrent-rollouts: u32,
+        picked-ids: list<string>,
+    }
+
+    /// A detected concurrency hazard between deliverables.
+    record collision-report {
+        kind: string,
+        capability: string,
+        deliverable-ids: list<string>,
+        severity: string,
+        message: string,
+    }
+
+    /// A deliverable held by the project's policy and why.
+    record held-item {
+        deliverable-id: string,
+        reason: string,
+    }
+
+    /// Subject hash slice assignment for `mutually-exclusive-layers`.
+    record slice-assignment {
+        deliverable-id: string,
+        slot: u32,
+        total: u32,
+    }
+
+    /// Full arbitration decision for a project's deliverables.
+    record arbitration-outcome {
+        strategy: release-strategy,
+        allowed-ids: list<string>,
+        held: list<held-item>,
+        slices: list<slice-assignment>,
+        collisions: list<collision-report>,
+    }
+
+    /// Evaluate which contenders are allowed, held, or sliced under `policy`.
+    arbitrate: func(policy: project-policy, contenders: list<contender>) -> arbitration-outcome;
+
+    /// Deterministic FNV-1a membership test for `mutually-exclusive-layers`.
+    subject-in-slice: func(subject: string, slot: u32, total: u32) -> bool;
+}

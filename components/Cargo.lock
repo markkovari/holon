@@ -747,6 +747,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "delivery-assets"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
+name = "delivery-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "demo-probe"
 version = "0.1.0"
 dependencies = [
@@ -1879,6 +1897,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kv-analytics"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "kv-probe"
 version = "0.1.0"
 dependencies = [
@@ -2573,6 +2598,15 @@ dependencies = [
  "cpufeatures",
  "opaque-debug",
  "universal-hash",
+]
+
+[[package]]
+name = "posthog-analytics"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3572,6 +3606,16 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vet-booking-domain"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
 
 [[package]]
 name = "vet-domain"

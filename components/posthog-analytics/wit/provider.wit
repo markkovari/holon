@@ -1,0 +1,20 @@
+// posthog:analytics — `analytics:telemetry` over a self-hosted PostHog instance.
+//
+// Config (wasi:config/store):
+//   posthog-host        base URL of self-hosted PostHog (e.g. "https://posthog.internal")
+//   posthog-project-id  numeric PostHog project id for `/api/projects/{id}/query/`
+//
+// Secrets (comp:secrets/reader):
+//   posthog-api-key        personal API key (`phx_...`) for HogQL read queries
+//   posthog-project-token  project token (`phc_...`) for `/capture/` & `/batch/`
+package posthog:analytics@0.1.0;
+
+world posthog-analytics {
+    export analytics:telemetry/types@0.1.0;
+    export analytics:telemetry/ingest@0.1.0;
+    export analytics:telemetry/query@0.1.0;
+
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
+}

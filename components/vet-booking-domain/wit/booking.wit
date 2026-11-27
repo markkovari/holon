@@ -1,0 +1,15 @@
+// vet:booking — Meadowbrook Vet Clinic appointment booking portal.
+//
+// Owns all vet-clinic domain UI and triage invocation (`clinic:triage`),
+// completely decoupled from the generic `delivery-domain` SDLC substrate.
+// Emits exposures and booking conversions via universal `analytics:telemetry`.
+package vet:booking@0.1.0;
+
+world vet-booking-domain {
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
+
+    import clinic:triage/evaluator@0.1.0;
+    import analytics:telemetry/ingest@0.1.0;
+    import id:generate/generator@0.1.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
+}

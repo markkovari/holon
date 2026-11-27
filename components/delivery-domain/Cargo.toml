@@ -1,0 +1,17 @@
+[package]
+name = "delivery-domain"
+description = "Paved-road E2E SDLC delivery controller: parallel stg/prod tracks, context-based component wiring, A/B analytics, gradual rollout, and guardrail auto-rollback (delivery:sdlc)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+guestfmt = { path = "../guestfmt" }
+guestio = { path = "../guestio" }
+wit-bindgen = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
