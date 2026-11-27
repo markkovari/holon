@@ -52,9 +52,9 @@ mod bindings {
     });
     /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
@@ -72,7 +72,6 @@ use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::crdt::merge::merger as crdt;
 use bindings::email::template::renderer as email;
 use bindings::event::bus::bus as eventbus;
-use bindings::p3::handler::Guest;
 use bindings::fsm::workflow::engine as fsm;
 use bindings::i18n::catalog::catalog as i18n;
 use bindings::id::generate::generator as ids;
@@ -81,6 +80,9 @@ use bindings::mail::parse::parser as mail_parse;
 use bindings::md::render::renderer as md;
 use bindings::notify::dispatch::dispatcher as notify;
 use bindings::outbox::dispatch::queue as outbox;
+use bindings::p3::clocks::system_clock;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use bindings::policy::guard::guard as policy;
 use bindings::policy::guard::guard::Attr;
 use bindings::quota::meter::meter as quota;
@@ -89,8 +91,6 @@ use bindings::ratelimit::guard::limiter as ratelimit;
 use bindings::ratelimit::guard::limiter::LimitError;
 use bindings::records::store::store as records;
 use bindings::sched::timer::timer;
-use bindings::p3::clocks::system_clock;
-use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use bindings::webhook::ingest::verifier as webhook_ingest;
 use bindings::webhook::sign::signer as webhook_sign;
 
@@ -988,11 +988,7 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
 }
 
 /// `respond` with `extra` headers on top of the JSON content-type.
-fn respond_extra(
-    status: u16,
-    extra: &[(&str, &str)],
-    body: &[u8],
-) -> Result<Response, ErrorCode> {
+fn respond_extra(status: u16, extra: &[(&str, &str)], body: &[u8]) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     for (k, v) in extra {

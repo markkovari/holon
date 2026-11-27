@@ -37,9 +37,9 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
@@ -56,13 +56,13 @@ use bindings::event::bus::bus;
 use bindings::fsm::workflow::engine as fsm;
 use bindings::md::render::renderer as md;
 use bindings::notify::dispatch::dispatcher as notify;
+use bindings::p3::clocks::monotonic_clock;
+use bindings::p3::clocks::system_clock;
 use bindings::paginate::cursor::cursors as paginate;
 use bindings::policy::guard::guard as policy;
 use bindings::records::store::store as records;
 use bindings::search::index::index as search;
 use bindings::ui::assets::files as statics;
-use bindings::p3::clocks::monotonic_clock;
-use bindings::p3::clocks::system_clock;
 use bindings::webhook::sign::signer as sign;
 
 use bindings::p3::handler::Guest;
@@ -872,9 +872,7 @@ use guestfmt::percent_decode as decode;
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => {
-            respond_ct(code, "application/json", &[], body.as_bytes())
-        }
+        Outcome::Json(code, body) => respond_ct(code, "application/json", &[], body.as_bytes()),
         Outcome::Raw(code, ct, bytes) => respond_ct(code, &ct, &[], &bytes),
         Outcome::Auth(e) => {
             if let AuthError::RateLimited(secs) = e {
@@ -894,27 +892,19 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
                 )
             }
         }
-        Outcome::Bad(msg) => respond_ct(
-            400,
-            "application/json",
-            &[],
-            json!({ "error": msg }).to_string().as_bytes(),
-        ),
+        Outcome::Bad(msg) => {
+            respond_ct(400, "application/json", &[], json!({ "error": msg }).to_string().as_bytes())
+        }
         Outcome::Err(code, msg) => respond_ct(
             code,
             "application/json",
             &[],
             json!({ "error": msg }).to_string().as_bytes(),
         ),
-        Outcome::Forbidden(msg) => respond_ct(
-            403,
-            "application/json",
-            &[],
-            json!({ "error": msg }).to_string().as_bytes(),
-        ),
-        Outcome::NotFound => {
-            respond_ct(404, "application/json", &[], b"{\"error\":\"not_found\"}")
+        Outcome::Forbidden(msg) => {
+            respond_ct(403, "application/json", &[], json!({ "error": msg }).to_string().as_bytes())
         }
+        Outcome::NotFound => respond_ct(404, "application/json", &[], b"{\"error\":\"not_found\"}"),
     }
 }
 

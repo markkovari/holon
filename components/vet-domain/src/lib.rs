@@ -45,9 +45,9 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
@@ -181,9 +181,7 @@ enum Outcome {
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => {
-            respond(code, "application/json", body)
-        }
+        Outcome::Json(code, body) => respond(code, "application/json", body),
         Outcome::Raw(code, ct, bytes) => respond(code, &ct, bytes),
         Outcome::Auth(e) => {
             // Also a retryAfter JSON field so the UI can show it.
@@ -198,12 +196,8 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
                 respond_json(code, &format!("{{\"error\":\"{msg}\"}}"))
             }
         }
-        Outcome::Bad(msg) => {
-            respond_json(400, &format!("{{\"error\":\"{}\"}}", esc(&msg)))
-        }
-        Outcome::Err(code, msg) => {
-            respond_json(code, &format!("{{\"error\":\"{}\"}}", esc(&msg)))
-        }
+        Outcome::Bad(msg) => respond_json(400, &format!("{{\"error\":\"{}\"}}", esc(&msg))),
+        Outcome::Err(code, msg) => respond_json(code, &format!("{{\"error\":\"{}\"}}", esc(&msg))),
         Outcome::NotFound => respond_json(404, "{\"error\":\"not_found\"}"),
     }
 }

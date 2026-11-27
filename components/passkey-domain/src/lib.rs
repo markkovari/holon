@@ -24,10 +24,10 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
-        pub use super::wasi::random0_3_0_rc_2026_03_15 as random;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
+        pub use super::wasi::random0_3_0 as random;
     }
 }
 
@@ -36,11 +36,11 @@ use base64::Engine;
 use serde_json::{json, Map, Value};
 
 use bindings::cache::store::cache;
+use bindings::p3::clocks::system_clock;
+use bindings::p3::random::random;
 use bindings::records::store::store as records;
 use bindings::session::store::store as sessions;
-use bindings::p3::clocks::system_clock;
 use bindings::wasi::config::store as config;
-use bindings::p3::random::random;
 use bindings::webauthn::verify::verifier as wa;
 
 use bindings::p3::handler::Guest;
@@ -533,7 +533,8 @@ fn challenge_from_client_data(client_data: &[u8]) -> Option<String> {
 }
 
 async fn body(request: Request) -> Result<Value, Outcome> {
-    let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }

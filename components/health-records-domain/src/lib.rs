@@ -26,9 +26,9 @@ mod bindings {
     });
     /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
@@ -36,8 +36,8 @@ use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
-use bindings::records::store::store as records;
 use bindings::p3::clocks::system_clock;
+use bindings::records::store::store as records;
 use bindings::wasi::keyvalue::store;
 use serde_json::{json, Map, Value};
 
@@ -113,7 +113,8 @@ fn introspect(request: &Request) -> Result<Principal, Outcome> {
 }
 
 async fn body(request: Request) -> Result<Value, Outcome> {
-    let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }

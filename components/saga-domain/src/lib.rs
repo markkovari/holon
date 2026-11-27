@@ -27,9 +27,9 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
@@ -39,9 +39,9 @@ use bindings::event::bus::bus;
 use bindings::fsm::workflow::engine as fsm;
 use bindings::id::generate::generator as ids;
 use bindings::idempotency::guard::store as idem;
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
 use bindings::sched::timer::timer;
-use bindings::p3::clocks::system_clock;
 
 use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
@@ -288,27 +288,25 @@ async fn step(id: &str) -> bool {
             }
             true
         }
-        "compensating" => {
-            match last_booked(&data) {
-                Some(i) => {
-                    let leg = leg_name(&data, i);
-                    compensate_leg(id, &leg);
-                    set_leg(&mut data, i, "compensated", "");
-                    save(id, &data);
-                    publish("saga.leg.compensated", &json!({"saga": id, "leg": leg}));
-                    true
-                }
-                None => {
-                    set_status(
-                        &mut data,
-                        fire(id, "compensated").unwrap_or_else(|| "compensated".into()),
-                    );
-                    save(id, &data);
-                    publish("saga.compensated", &json!({"saga": id}));
-                    true
-                }
+        "compensating" => match last_booked(&data) {
+            Some(i) => {
+                let leg = leg_name(&data, i);
+                compensate_leg(id, &leg);
+                set_leg(&mut data, i, "compensated", "");
+                save(id, &data);
+                publish("saga.leg.compensated", &json!({"saga": id, "leg": leg}));
+                true
             }
-        }
+            None => {
+                set_status(
+                    &mut data,
+                    fire(id, "compensated").unwrap_or_else(|| "compensated".into()),
+                );
+                save(id, &data);
+                publish("saga.compensated", &json!({"saga": id}));
+                true
+            }
+        },
         _ => false,
     }
 }
@@ -355,14 +353,10 @@ async fn golem_book(url: &str, host: &str, workflow: &str) -> Result<String, Str
     let authority = if host.is_empty() { url_authority } else { host.to_string() };
     let target = format!("{scheme}://{authority}/counters/{workflow}/increment");
     // A truncated reply parses into a plausible, wrong result, so `fetch` reports it as an error.
-    let (status, bytes) = fetch(
-        Method::Post,
-        &target,
-        &[("content-type", "application/json")],
-        Vec::new(),
-    )
-    .await
-    .map_err(|e| format!("golem unreachable: {e}"))?;
+    let (status, bytes) =
+        fetch(Method::Post, &target, &[("content-type", "application/json")], Vec::new())
+            .await
+            .map_err(|e| format!("golem unreachable: {e}"))?;
     if !(200..300).contains(&status) {
         return Err(format!("golem status {status}"));
     }
@@ -464,7 +458,8 @@ fn store_err(e: records::StoreError) -> Outcome {
 }
 
 async fn parse_body(request: Request) -> Result<Value, Outcome> {
-    let body = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+    let body =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }

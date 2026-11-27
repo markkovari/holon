@@ -32,9 +32,9 @@ mod bindings {
     });
     /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
@@ -44,9 +44,9 @@ use bindings::cron::expr::parser as cron;
 use bindings::durable::workflow::orchestrator as workflow;
 use bindings::idempotency::guard::store as idem;
 use bindings::outbox::dispatch::queue as outbox;
-use bindings::records::store::store as records;
 use bindings::p3::clocks::monotonic_clock;
 use bindings::p3::clocks::system_clock;
+use bindings::records::store::store as records;
 
 use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
@@ -400,7 +400,8 @@ fn store_err(e: records::StoreError) -> Outcome {
 }
 
 async fn parse_body(request: Request) -> Result<Value, Outcome> {
-    let body = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+    let body =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }

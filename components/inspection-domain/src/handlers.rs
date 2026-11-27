@@ -4,8 +4,8 @@
 //! `admin` sees every inspection; an `inspector` only their own: the row-level rule `auth:identity/rbac` cannot express,
 //! enforced per-row with `guestauth::guest_owner_or_admin_policy!` (as `crm-domain` does) and at list time with the same `find_by` filter shape.
 
-use crate::bindings::records::store::store as records;
 use crate::bindings::p3::http::types::Method;
+use crate::bindings::records::store::store as records;
 use crate::{audit, introspect, is_admin, now_secs, Reply, Route};
 use serde_json::{json, Value};
 

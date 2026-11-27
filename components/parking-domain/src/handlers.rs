@@ -1,8 +1,8 @@
 //! Windows are HALF-OPEN [start, end), so adjacent bookings are allowed. Overlap is plain Rust
 //! (auth:identity/rbac cannot express it); cancelling is a policy:guard row-level rule.
 
-use crate::bindings::records::store::store as records;
 use crate::bindings::p3::http::types::Method;
+use crate::bindings::records::store::store as records;
 use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
