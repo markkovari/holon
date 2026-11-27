@@ -1,0 +1,33 @@
+// delivery:app — App-agnostic E2E SDLC delivery control plane & SSE dashboard.
+//
+// Zero domain-specific code or imports: tracks deliverables for ANY project
+// across `draft -> gated -> stg -> ab_test -> rollout -> promoted | rolled_back`,
+// enforces per-project multi-rollout arbitration strategies, reads/writes
+// telemetry exclusively through universal `analytics:telemetry@0.1.0` (plug
+// `kv-analytics` locally or `posthog-analytics` for self-hosted PostHog), and
+// serves its dashboard via `ui:assets/files@0.1.0`.
+package delivery:app@0.1.0;
+
+world delivery-domain {
+    export wasi:http/handler@0.3.0;
+    export delivery:sdlc/router@0.1.0;
+
+    // Durable deliverable records and per-project release policies.
+    import records:store/store@0.1.0;
+    // Weighted, sticky, named-variant assignment for A/B/n experiments.
+    import experiment:assign/assigner@0.1.0;
+    // Percentage rollout & tenant-scoped overrides for gradual rollouts.
+    import featureflags:guard/evaluator@0.1.0;
+    // Universal telemetry contract (plug `kv-analytics` or `posthog-analytics`).
+    import analytics:telemetry/ingest@0.1.0;
+    import analytics:telemetry/query@0.1.0;
+    // Ordered E2E audit trail + live SSE stream spine.
+    import event:bus/bus@0.1.0;
+    // Unique ids.
+    import id:generate/generator@0.1.0;
+    // Dashboard UI assets (`delivery-assets`).
+    import ui:assets/files@0.1.0;
+    // Timestamps and SSE poll cadence.
+    import wasi:clocks/system-clock@0.3.0;
+    import wasi:clocks/monotonic-clock@0.3.0;
+}

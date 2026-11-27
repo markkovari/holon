@@ -1,0 +1,13 @@
+[package]
+name = "kv-analytics"
+description = "Local KV-backed provider for analytics:telemetry@0.1.0 over metrics:collect — drop-in offline twin of posthog-analytics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }

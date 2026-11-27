@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-132 interfaces.
+137 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -72,6 +72,124 @@ Adding a *function* to an interface is compatible; adding a case to a
     }
 
     infer: func(prompt: string) -> result<string, infer-error>;
+  }
+```
+
+## `analytics:telemetry/ingest@0.1.0`
+
+```wit
+  interface ingest {
+    use types.{analytics-error, event, property};
+
+    capture: func(ev: event) -> result<_, analytics-error>;
+
+    capture-batch: func(events: list<event>) -> result<u32, analytics-error>;
+
+    identify: func(distinct-id: string, traits: list<property>) -> result<_, analytics-error>;
+  }
+```
+
+## `analytics:telemetry/query@0.1.0`
+
+```wit
+  interface query {
+    use types.{analytics-error, event-filter, experiment-query, funnel-stage-result, funnel-step, interval, series-point, time-window, variant-summary};
+
+    count: func(filter: event-filter) -> result<u64, analytics-error>;
+
+    unique-users: func(filter: event-filter) -> result<u64, analytics-error>;
+
+    timeseries: func(filter: event-filter, bucket: interval) -> result<list<series-point>, analytics-error>;
+
+    funnel: func(project: string, steps: list<funnel-step>, window: time-window) -> result<list<funnel-stage-result>, analytics-error>;
+
+    experiment-results: func(req: experiment-query) -> result<list<variant-summary>, analytics-error>;
+
+    breakdown: func(filter: event-filter, property-key: string, limit: u32) -> result<list<tuple<string, u64>>, analytics-error>;
+  }
+```
+
+## `analytics:telemetry/types@0.1.0`
+
+```wit
+  interface types {
+    record property {
+      key: string,
+      value: string,
+    }
+
+    record time-window {
+      from-unix: u64,
+      to-unix: u64,
+    }
+
+    record event {
+      name: string,
+      distinct-id: string,
+      project: string,
+      timestamp-unix: u64,
+      properties: list<property>,
+    }
+
+    record event-filter {
+      event-name: string,
+      project: string,
+      property-filters: list<property>,
+      window: time-window,
+    }
+
+    enum interval {
+      hour,
+      day,
+      week,
+    }
+
+    record series-point {
+      bucket-unix: u64,
+      count: u64,
+      unique-users: u64,
+    }
+
+    record funnel-step {
+      event-name: string,
+      property-filters: list<property>,
+    }
+
+    record funnel-stage-result {
+      event-name: string,
+      count: u64,
+      unique-users: u64,
+      conversion-rate: f64,
+    }
+
+    record experiment-query {
+      project: string,
+      experiment-key: string,
+      exposure-event: string,
+      conversion-event: string,
+      error-event: string,
+      variant-property: string,
+      variants: list<string>,
+      window: time-window,
+    }
+
+    record variant-summary {
+      arm: string,
+      exposures: u64,
+      conversions: u64,
+      errors: u64,
+      unique-users: u64,
+      conversion-rate: f64,
+      error-rate: f64,
+    }
+
+    variant analytics-error {
+      unauthorized,
+      rate-limited,
+      invalid-query(string),
+      backend-unavailable(string),
+      not-supported(string),
+    }
   }
 ```
 
@@ -518,6 +636,33 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
+## `clinic:triage/evaluator@0.1.0`
+
+```wit
+  interface evaluator {
+    record visit-context {
+      species: string,
+      age-years: u32,
+      minutes: u32,
+      symptoms: string,
+      owner-tier: string,
+      tenant: string,
+    }
+
+    record triage-decision {
+      priority: string,
+      fee-cents: u64,
+      recommended-vet: string,
+      recommendation: string,
+      variant-id: string,
+    }
+
+    evaluate: func(ctx: visit-context) -> triage-decision;
+
+    variant-info: func() -> string;
+  }
+```
+
 ## `config:store/store@0.1.0`
 
 ```wit
@@ -763,6 +908,16 @@ Adding a *function* to an interface is compatible; adding a case to a
     legality: func(deck: list<slot>) -> list<illegal>;
 
     shortfall: func(deck: list<slot>, owned: list<owned>, prices: list<price>, currency: string) -> shortfall-report;
+  }
+```
+
+## `delivery:sdlc/router@0.1.0`
+
+```wit
+  interface router {
+    use types.{delivery-error, user-context, wiring-decision};
+
+    resolve: func(deliverable-id: string, ctx: user-context) -> result<wiring-decision, delivery-error>;
   }
 ```
 

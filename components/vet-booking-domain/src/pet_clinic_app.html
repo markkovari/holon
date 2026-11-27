@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Meadowbrook Vet Clinic</title>
+  <style>
+    :root {
+      --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --text: #0f172a; --muted: #64748b;
+      --blue: #2563eb; --green: #059669; --amber: #d97706; --red: #dc2626; --purple: #7c3aed;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.4;
+    }
+    .nav {
+      background: #0f172a; color: #fff; padding: 9px 14px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .brand { font-weight: 700; font-size: 13.5px; display: flex; align-items: center; gap: 6px; }
+    .mode-tag {
+      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .mode-classic { background: rgba(96,165,250,0.22); color: #93c5fd; }
+    .mode-wizard { background: rgba(52,211,153,0.24); color: #6ee7b7; }
+    .user-pill {
+      font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600;
+      background: rgba(148,163,184,0.2); color: #e2e8f0;
+    }
+    .wrap { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+      box-shadow: 0 1px 3px rgba(15,23,42,0.05);
+    }
+    .card-classic { border-top: 3px solid var(--blue); }
+    .card-wizard {
+      border-top: 3px solid var(--green);
+      background: linear-gradient(180deg, #ffffff 0%, #f0fdf4 100%);
+    }
+    .form-title {
+      font-size: 13px; font-weight: 700; margin-bottom: 8px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    label { display: block; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin-bottom: 3px; }
+    input, select {
+      width: 100%; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px;
+      font-size: 12px; background: #fff; color: var(--text);
+    }
+    .btn-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+    button {
+      border: 0; border-radius: 7px; padding: 7px 12px; font-size: 12px; font-weight: 600;
+      cursor: pointer; background: var(--blue); color: #fff;
+    }
+    button:hover { opacity: 0.92; }
+    button.green { background: var(--green); }
+    button.ghost { background: #e2e8f0; color: #1e293b; }
+
+    /* 3-Step Wizard Stepper */
+    .stepper {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 10px;
+    }
+    .s-item {
+      flex: 1; text-align: center; font-size: 11px; font-weight: 600;
+      padding: 5px 6px; border-radius: 7px; background: #e2e8f0; color: #475569;
+    }
+    .s-item.active { background: var(--green); color: #fff; }
+    .s-item.done { background: #d1fae5; color: #047857; }
+
+    .badges { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
+    .badge {
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
+      text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .b-care { background: #d1fae5; color: #047857; }
+    .b-vip { background: #fef3c7; color: #b45309; }
+    .b-senior { background: #ede9fe; color: #6d28d9; }
+    .b-emg { background: #fee2e2; color: #b91c1c; }
+
+    .price-box { display: flex; align-items: baseline; gap: 8px; margin: 5px 0; }
+    .price-now { font-size: 19px; font-weight: 800; }
+    .price-strike { font-size: 12.5px; color: var(--muted); text-decoration: line-through; }
+    .price-save { font-size: 10.5px; font-weight: 700; color: var(--green); background: #d1fae5; padding: 2px 6px; border-radius: 5px; }
+
+    .alert-banner {
+      margin-top: 6px; padding: 6px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;
+      background: #fffbeb; border: 1px solid #fcd34d; color: #92400e;
+    }
+    .booked-banner {
+      margin-top: 8px; padding: 7px 10px; border-radius: 7px; font-size: 11.5px; font-weight: 700;
+      background: #d1fae5; color: #065f46; display: flex; justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <div class="brand">
+      🐾 Meadowbrook Vet
+      <span id="mode-tag" class="mode-tag mode-classic">Classic 1-Page Form</span>
+    </div>
+    <span id="user-pill" class="user-pill">Loading…</span>
+  </div>
+  <div class="wrap" id="app-root">
+    <div class="card">Loading booking experience…</div>
+  </div>
+
+  <script>
+    const qs = new URLSearchParams(location.search);
+    const USER = qs.get("user") || "Alice";
+    const SUBJECT = qs.get("subject") || "owner-alice";
+    const TENANT = qs.get("tenant") || "main-clinic";
+    const STAGE = qs.get("stage") || "prod";
+    const COHORT = qs.get("cohort") || "general";
+
+    const state = {
+      deliverableId: qs.get("deliverable") || "",
+      mode: "classic", // "classic" (1-page form) | "wizard" (3-step wizard)
+      step: 1,
+      species: qs.get("species") || "dog",
+      age: Number(qs.get("age") || 9),
+      minutes: Number(qs.get("minutes") || 30),
+      symptoms: qs.get("symptoms") || "annual checkup",
+      tier: qs.get("tier") || "vip",
+      triage: null,
+      booked: false,
+    };
+
+    const VET_NAMES = {
+      "dr-general": "Dr. Sarah Lin (General)",
+      "dr-geriatric": "Dr. Elena Vance (Geriatric)",
+      "dr-feather-wing": "Dr. Marcus Chen (Avian)",
+      "er-oncall": "ER Triage Team (On-Call)",
+      "dr-urgent-care": "Dr. Priya Patel (Urgent Care)",
+    };
+
+    document.getElementById("user-pill").textContent = `${USER} · ${TENANT}`;
+
+    async function findDeliverable() {
+      if (state.deliverableId) return state.deliverableId;
+      const r = await fetch("/api/deliverables?project=vet-clinic");
+      const j = await r.json();
+      const hit = (j.deliverables || []).find(x => x.deliverable.capability === "clinic:triage/evaluator@0.1.0");
+      if (hit) state.deliverableId = hit.deliverable.id;
+      return state.deliverableId;
+    }
+
+    async function syncExperience() {
+      const id = await findDeliverable();
+      if (!id) {
+        state.mode = "classic";
+        render();
+        return;
+      }
+      const headers = { "content-type": "application/json" };
+      if (STAGE === "stg") headers["x-holon-stage"] = "stg";
+      const r = await fetch(`/api/deliverables/${id}/resolve`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          context: { tenant: TENANT, subject: SUBJECT, cohort: COHORT, stage: STAGE },
+        }),
+      });
+      const j = await r.json();
+      const nextMode = j.wiring?.role === "candidate" ? "wizard" : "classic";
+      if (nextMode !== state.mode) {
+        state.mode = nextMode;
+        state.step = 1;
+        state.triage = null;
+        state.booked = false;
+      }
+      const tag = document.getElementById("mode-tag");
+      if (state.mode === "wizard") {
+        tag.textContent = "★ NEW 3-Step Wizard";
+        tag.className = "mode-tag mode-wizard";
+      } else {
+        tag.textContent = "Classic 1-Page Form";
+        tag.className = "mode-tag mode-classic";
+      }
+      render();
+    }
+
+    async function callTriage() {
+      const id = await findDeliverable();
+      if (!id) return;
+      const headers = { "content-type": "application/json" };
+      if (STAGE === "stg") headers["x-holon-stage"] = "stg";
+      const r = await fetch(`/api/deliverables/${id}/triage`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          context: { tenant: TENANT, subject: SUBJECT, cohort: COHORT, stage: STAGE },
+          species: state.species,
+          age_years: state.age,
+          minutes: state.minutes,
+          symptoms: state.symptoms,
+          owner_tier: state.tier,
+        }),
+      });
+      state.triage = await r.json();
+      state.booked = false;
+      render();
+    }
+
+    async function confirmBooking() {
+      if (!state.triage || !state.deliverableId) return;
+      await fetch(`/api/deliverables/${state.deliverableId}/outcome`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          variant_id: state.triage.variant_id,
+          kind: "converted",
+          idempotency_key: "wiz-" + state.triage.triage_id,
+        }),
+      });
+      state.booked = true;
+      render();
+    }
+
+    function readInputs() {
+      const sp = document.getElementById("f-species");
+      const ag = document.getElementById("f-age");
+      const mn = document.getElementById("f-minutes");
+      const sy = document.getElementById("f-symptoms");
+      const tr = document.getElementById("f-tier");
+      if (sp) state.species = sp.value;
+      if (ag) state.age = Number(ag.value);
+      if (mn) state.minutes = Number(mn.value);
+      if (sy) state.symptoms = sy.value;
+      if (tr) state.tier = tr.value;
+    }
+
+    window.refreshExperience = () => syncExperience();
+    window.classicSubmit = async () => { readInputs(); await callTriage(); };
+    window.wizNext1 = () => { readInputs(); state.step = 2; render(); };
+    window.wizNext2 = async () => { readInputs(); state.step = 3; await callTriage(); };
+    window.wizBack = (to) => { state.step = to; render(); };
+    window.doConfirm = () => confirmBooking();
+
+    function renderClassic() {
+      const t = state.triage;
+      const vet = t ? (VET_NAMES[t.recommended_vet] || t.recommended_vet) : "";
+      const fee = t ? "$" + (t.fee_cents / 100).toFixed(2) : "";
+      return `
+        <div class="card card-classic">
+          <div class="form-title">
+            <span>Book an Appointment (All-in-One Form)</span>
+            <button id="btn-sync" class="ghost" style="padding:3px 8px;font-size:10.5px;" onclick="refreshExperience()">↻ Refresh</button>
+          </div>
+          <div class="form-grid">
+            <div><label>Pet</label><select id="f-species"><option value="dog" ${state.species==='dog'?'selected':''}>Dog</option><option value="cat" ${state.species==='cat'?'selected':''}>Cat</option><option value="bird" ${state.species==='bird'?'selected':''}>Bird</option></select></div>
+            <div><label>Age (yrs)</label><input id="f-age" type="number" value="${state.age}" /></div>
+            <div><label>Slot</label><select id="f-minutes"><option value="15" ${state.minutes===15?'selected':''}>15 min</option><option value="30" ${state.minutes===30?'selected':''}>30 min</option><option value="60" ${state.minutes===60?'selected':''}>60 min</option></select></div>
+          </div>
+          <div class="form-grid-2">
+            <div><label>Reason / Symptoms</label><input id="f-symptoms" value="${state.symptoms}" /></div>
+            <div><label>Plan</label><select id="f-tier"><option value="vip" ${state.tier==='vip'?'selected':''}>PawClub Member</option><option value="standard" ${state.tier==='standard'?'selected':''}>Standard</option></select></div>
+          </div>
+          <div class="btn-row">
+            <button id="btn-classic-check" onclick="classicSubmit()">Check Price &amp; Book</button>
+            ${t && !state.booked ? `<button id="btn-confirm" class="green" onclick="doConfirm()">✓ Confirm (${fee})</button>` : ''}
+          </div>
+          ${t ? `
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:12px;">
+              <b>${fee}</b> · ${vet} — ${t.recommendation}
+            </div>` : ''}
+          ${state.booked ? `<div class="booked-banner"><span>✓ Booked (${vet})</span><span>Classic Form</span></div>` : ''}
+        </div>
+      `;
+    }
+
+    function renderWizard() {
+      const s = state.step;
+      const t = state.triage;
+      const vet = t ? (VET_NAMES[t.recommended_vet] || t.recommended_vet) : "";
+      const fee = t ? "$" + (t.fee_cents / 100).toFixed(2) : "";
+      const base = t ? "$" + (t.base_fee_cents / 100).toFixed(2) : "";
+
+      let body = "";
+      if (s === 1) {
+        body = `
+          <div class="form-grid">
+            <div><label>Pet Species</label><select id="f-species"><option value="dog" ${state.species==='dog'?'selected':''}>Dog</option><option value="cat" ${state.species==='cat'?'selected':''}>Cat</option><option value="bird" ${state.species==='bird'?'selected':''}>Bird</option></select></div>
+            <div><label>Age (yrs)</label><input id="f-age" type="number" value="${state.age}" /></div>
+            <div><label>Membership</label><select id="f-tier"><option value="vip" ${state.tier==='vip'?'selected':''}>PawClub Member</option><option value="standard" ${state.tier==='standard'?'selected':''}>Standard</option></select></div>
+          </div>
+          <div class="btn-row">
+            <button id="btn-wiz-next1" class="green" onclick="wizNext1()">Next: Symptoms &amp; Slot →</button>
+          </div>
+        `;
+      } else if (s === 2) {
+        body = `
+          <div class="form-grid-2">
+            <div><label>Symptoms / Visit Reason</label><input id="f-symptoms" value="${state.symptoms}" /></div>
+            <div><label>Preferred Slot</label><select id="f-minutes"><option value="15" ${state.minutes===15?'selected':''}>15 min</option><option value="30" ${state.minutes===30?'selected':''}>30 min</option><option value="60" ${state.minutes===60?'selected':''}>60 min</option></select></div>
+          </div>
+          <div class="btn-row">
+            <button class="ghost" onclick="wizBack(1)">← Back</button>
+            <button id="btn-wiz-next2" class="green" onclick="wizNext2()">Next: Personalized Care Plan →</button>
+          </div>
+        `;
+      } else if (s === 3 && t) {
+        const isEmg = t.priority === "emergency";
+        const badges = [
+          `<span class="badge b-care">★ Guided 3-Step Care Plan</span>`,
+          isEmg ? `<span class="badge b-emg">🚨 Emergency Priority</span>` : '',
+          t.priority === "priority" ? `<span class="badge b-senior">⭐ Senior Pet Fast-Track</span>` : '',
+          t.discount_pct > 0 ? `<span class="badge b-vip">💎 ${t.discount_pct}% PawClub Savings</span>` : '',
+        ].filter(Boolean).join("");
+        body = `
+          <div class="badges">${badges}</div>
+          <div class="price-box">
+            <span class="price-now">${fee}</span>
+            ${t.discount_pct > 0 ? `<span class="price-strike">${base}</span><span class="price-save">Save ${t.discount_pct}%</span>` : ''}
+            <span style="margin-left:auto;font-weight:700;font-size:12px;">${vet}</span>
+          </div>
+          <div style="font-size:12px;color:#1e293b;">${t.recommendation}</div>
+          ${t.slot_warning ? `<div class="alert-banner">⚠ ${t.slot_warning}</div>` : ''}
+          ${state.booked
+            ? `<div class="booked-banner"><span>✓ Appointment Confirmed · ${vet}</span><span>3-Step Wizard</span></div>`
+            : `<div class="btn-row"><button class="ghost" onclick="wizBack(2)">← Edit</button><button id="btn-confirm" class="green" onclick="doConfirm()">✓ Confirm Appointment (${fee})</button></div>`}
+        `;
+      }
+
+      return `
+        <div class="card card-wizard">
+          <div class="form-title">
+            <span>Guided Appointment Wizard</span>
+            <button id="btn-sync" class="ghost" style="padding:3px 8px;font-size:10.5px;" onclick="refreshExperience()">↻ Refresh</button>
+          </div>
+          <div class="stepper">
+            <div class="s-item ${s===1?'active':(s>1?'done':'')}">① Pet &amp; Plan</div>
+            <div class="s-item ${s===2?'active':(s>2?'done':'')}">② Symptoms</div>
+            <div class="s-item ${s===3?'active':''}">③ Care Plan</div>
+          </div>
+          ${body}
+        </div>
+      `;
+    }
+
+    function render() {
+      document.getElementById("app-root").innerHTML =
+        state.mode === "wizard" ? renderWizard() : renderClassic();
+    }
+
+    syncExperience();
+  </script>
+</body>
+</html>

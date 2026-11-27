@@ -1,0 +1,16 @@
+import {
+  "clinic/triage/gen/interface/clinic/triage/evaluator" @evaluator,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+    },
+  },
+)

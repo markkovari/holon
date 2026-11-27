@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Holon SDLC — Multi-Project Delivery Dashboard</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --panel: #131a26;
+      --panel-2: #1a2333;
+      --border: #263248;
+      --text: #e6edf7;
+      --muted: #8b9bb4;
+      --accent: #60a5fa;
+      --green: #34d399;
+      --amber: #fbbf24;
+      --red: #f87171;
+      --purple: #a78bfa;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; font-weight: 500; padding: 3px 10px;
+      border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+    .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .dot.err { background: var(--red); }
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+    button {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 500;
+    }
+    button:hover { border-color: var(--accent); color: #fff; }
+    button.primary { background: #1d4ed8; border-color: #2563eb; color: #fff; }
+    button.primary:hover { background: #2563eb; }
+    button.danger { border-color: #7f1d1d; color: var(--red); }
+    button.danger:hover { background: #7f1d1d; color: #fff; }
+
+    main { max-width: 1360px; margin: 0 auto; padding: 20px 24px 48px; }
+
+    .kpi-row {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px; margin-bottom: 20px;
+    }
+    .kpi {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 16px;
+    }
+    .kpi .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .kpi .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+    .kpi .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+    @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+
+    .section-title {
+      font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
+    }
+
+    .project-list { display: flex; flex-direction: column; gap: 10px; }
+    .project-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    }
+    .project-card:hover { border-color: var(--accent); }
+    .project-card.active { border-color: var(--accent); background: #162033; }
+    .project-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .project-name { font-weight: 600; font-size: 15px; }
+    .badge {
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .badge.healthy, .badge.promoted { background: rgba(52,211,153,0.15); color: var(--green); }
+    .badge.delivering, .badge.stg, .badge.ab_test, .badge.rollout { background: rgba(96,165,250,0.15); color: var(--accent); }
+    .badge.degraded, .badge.rolled_back { background: rgba(248,113,113,0.15); color: var(--red); }
+    .badge.draft, .badge.gated { background: rgba(139,155,180,0.15); color: var(--muted); }
+
+    .project-stats { display: flex; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+    .stage-chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .chip { font-size: 11px; padding: 2px 7px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+
+    .detail-panel { display: flex; flex-direction: column; gap: 16px; }
+    .deliv-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
+    }
+    .deliv-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .deliv-title { font-size: 16px; font-weight: 600; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+
+    .pipeline { display: flex; gap: 6px; margin: 14px 0; flex-wrap: wrap; }
+    .step {
+      flex: 1; min-width: 72px; text-align: center; font-size: 11px; padding: 6px 8px;
+      border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+    }
+    .step.done { border-color: rgba(52,211,153,0.4); color: var(--green); }
+    .step.current { background: rgba(96,165,250,0.18); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .step.failed { background: rgba(248,113,113,0.18); border-color: var(--red); color: var(--red); font-weight: 600; }
+
+    .variants-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    @media (max-width: 720px) { .variants-grid { grid-template-columns: 1fr; } }
+    .variant-box {
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    }
+    .variant-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .bar-bg { height: 6px; background: #0f172a; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+    .bar-fill { height: 100%; background: var(--green); }
+    .bar-fill.err { background: var(--red); }
+
+    .wiring-row {
+      margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+      font-size: 12px; color: var(--muted);
+    }
+    .actions-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .feed {
+      margin-top: 20px; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px;
+    }
+    .feed-list {
+      max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+      margin-top: 8px;
+    }
+    .feed-item {
+      display: flex; justify-content: space-between; gap: 12px; font-size: 12px;
+      padding: 6px 8px; border-radius: 6px; background: var(--panel-2);
+    }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>Holon SDLC Control</h1>
+      <span class="pill"><span id="sse-dot" class="dot"></span><span id="sse-status">Connecting SSE...</span></span>
+    </div>
+    <div class="header-actions">
+      <button onclick="runTick()" class="primary">Run Post-Release Judge (/api/tick)</button>
+      <button onclick="refresh()">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="kpi-row" id="portfolio-kpis"></div>
+
+    <div class="layout">
+      <div>
+        <div class="section-title">
+          <span>Projects (KV Aggregate)</span>
+          <span id="project-count" class="mono">0</span>
+        </div>
+        <div id="project-list" class="project-list"></div>
+
+        <div class="feed">
+          <div class="section-title">
+            <span>Live SSE Event Stream</span>
+            <span id="event-count" class="mono">0 events</span>
+          </div>
+          <div id="feed-list" class="feed-list"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-title">
+          <span id="detail-heading">Project Details</span>
+          <span id="detail-meta" class="mono"></span>
+        </div>
+        <div id="detail-panel" class="detail-panel"></div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const STAGES = ["draft", "gated", "stg", "ab_test", "rollout", "promoted"];
+    let projects = [];
+    let selectedProject = null;
+    let feedEvents = [];
+
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function pct(v) { return (v * 100).toFixed(1) + "%"; }
+    function shortDigest(d) { return d ? d.slice(0, 19) + "…" : "unpinned"; }
+
+    async function refresh() {
+      const res = await fetch("/api/projects");
+      if (!res.ok) return;
+      const data = await res.json();
+      projects = data.projects || [];
+      if (!selectedProject && projects.length > 0) {
+        selectedProject = projects[0].project;
+      } else if (selectedProject && !projects.some(p => p.project === selectedProject) && projects.length > 0) {
+        selectedProject = projects[0].project;
+      }
+      renderPortfolio(data);
+      renderProjects();
+      renderDetail();
+    }
+
+    function renderPortfolio(data) {
+      const t = data.portfolio || {};
+      const lift = t.avg_conversion_lift || 0;
+      document.getElementById("portfolio-kpis").innerHTML = `
+        <div class="kpi"><div class="label">Projects</div><div class="value">${t.total_projects || 0}</div><div class="sub">KV-aggregated</div></div>
+        <div class="kpi"><div class="label">Deliverables</div><div class="value">${t.total_deliverables || 0}</div><div class="sub">${t.active_deliverables || 0} active in pipeline</div></div>
+        <div class="kpi"><div class="label">Total Exposures</div><div class="value">${t.total_exposures || 0}</div><div class="sub">${t.total_conversions || 0} conversions</div></div>
+        <div class="kpi"><div class="label">Avg Conversion Lift</div><div class="value ${lift >= 0 ? 'pos' : 'neg'}">${lift >= 0 ? '+' : ''}${pct(lift)}</div><div class="sub">candidate vs control</div></div>
+        <div class="kpi"><div class="label">Errors / Rollbacks</div><div class="value ${(t.total_errors || 0) > 0 ? 'neg' : 'pos'}">${t.total_errors || 0}</div><div class="sub">${t.rolled_back || 0} auto-rolled back</div></div>
+      `;
+    }
+
+    function renderProjects() {
+      document.getElementById("project-count").textContent = projects.length + " projects";
+      const el = document.getElementById("project-list");
+      if (projects.length === 0) {
+        el.innerHTML = `<div class="project-card"><div class="mono">No deliverables in KV yet. POST /api/deliverables to start.</div></div>`;
+        return;
+      }
+      el.innerHTML = projects.map(p => {
+        const chips = Object.entries(p.stage_counts || {})
+          .map(([k, v]) => `<span class="chip">${esc(k)}: ${v}</span>`).join("");
+        const lift = p.avg_conversion_lift || 0;
+        return `
+          <div class="project-card ${p.project === selectedProject ? 'active' : ''}" onclick="selectProject('${esc(p.project)}')">
+            <div class="project-head">
+              <span class="project-name">${esc(p.project)}</span>
+              <span class="badge ${esc(p.health)}">${esc(p.health)}</span>
+            </div>
+            <div class="project-stats">
+              <span>${p.total_deliverables} deliverables</span>
+              <span>${p.total_exposures} exp</span>
+              <span class="${lift >= 0 ? 'pos' : 'neg'}">lift ${lift >= 0 ? '+' : ''}${pct(lift)}</span>
+              ${p.total_errors > 0 ? `<span class="neg">${p.total_errors} err</span>` : ''}
+            </div>
+            <div class="stage-chips">${chips}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function selectProject(name) {
+      selectedProject = name;
+      renderProjects();
+      renderDetail();
+    }
+
+    function renderDetail() {
+      const p = projects.find(x => x.project === selectedProject);
+      const panel = document.getElementById("detail-panel");
+      if (!p) {
+        document.getElementById("detail-heading").textContent = "Project Details";
+        document.getElementById("detail-meta").textContent = "";
+        panel.innerHTML = `<div class="deliv-card mono">Select a project on the left to inspect its deliverables.</div>`;
+        return;
+      }
+      document.getElementById("detail-heading").textContent = `Project: ${p.project}`;
+      document.getElementById("detail-meta").textContent =
+        `${p.total_deliverables} deliverables · ${p.total_exposures} exposures · ${p.total_errors} errors`;
+
+      const policy = p.policy || { strategy: "fifo", max_concurrent_rollouts: 1, picked_ids: [] };
+      const arb = p.arbitration || { allowed_ids: [], held: [], collisions: [], traffic_slices: {} };
+      const heldMap = Object.fromEntries((arb.held || []).map(h => [h.deliverable_id, h.reason]));
+
+      const policyBar = `
+        <div class="deliv-card" style="padding:14px 18px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div>
+              <strong>Multi-Rollout Strategy</strong>
+              <span class="mono" style="margin-left:8px;">allowed: ${(arb.allowed_ids||[]).length} · held: ${(arb.held||[]).length}</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <select id="strategy-select" onchange="setStrategy('${esc(p.project)}', this.value)"
+                style="background:var(--panel-2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;">
+                ${[
+                  ["fifo", "FIFO Queue (per capability)"],
+                  ["human_pick", "Human Pick (operator gate)"],
+                  ["free_for_all", "Free-for-All (unrestricted parallel)"],
+                  ["mutually_exclusive_layers", "Mutually Exclusive Layers (disjoint hash slices)"],
+                  ["priority_preempt", "Priority Preempt (P0 hotfix pauses P2)"],
+                  ["train_batch", "Train Batch (synchronized cohort)"]
+                ].map(([val, label]) => `<option value="${val}" ${policy.strategy === val ? 'selected' : ''}>${label}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+          ${(arb.collisions || []).length > 0 ? `
+            <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
+              ${arb.collisions.map(c => `<div class="chip" style="border-color:var(--amber); color:var(--amber);">⚠ ${esc(c.kind)}: ${esc(c.message)}</div>`).join("")}
+            </div>
+          ` : ''}
+        </div>
+      `;
+
+      panel.innerHTML = policyBar + p.deliverables.map(item => {
+        const d = item.deliverable;
+        const a = item.analytics;
+        const j = item.judge;
+        const holdReason = heldMap[d.id];
+        const slice = (arb.traffic_slices || {})[d.id];
+        const curIdx = STAGES.indexOf(d.stage);
+        const isRolledBack = d.stage === "rolled_back";
+        const stepsHtml = STAGES.map((st, idx) => {
+          let cls = "step";
+          if (!isRolledBack && idx < curIdx) cls += " done";
+          if (!isRolledBack && idx === curIdx) cls += " current";
+          return `<div class="${cls}">${st === 'rollout' && d.stage === 'rollout' ? `rollout (${d.wiring.rollout_pct}%)` : st}</div>`;
+        }).join("") + (isRolledBack ? `<div class="step failed">rolled_back</div>` : "");
+
+        const renderVariant = (v, m) => `
+          <div class="variant-box">
+            <div class="variant-head">
+              <strong>${esc(v.id)}</strong>
+              <span class="chip">${esc(v.role)} · ${esc(v.language)}</span>
+            </div>
+            <div class="mono">${esc(shortDigest(v.digest))}</div>
+            <div style="margin-top:8px; font-size:12px; display:flex; justify-content:space-between;">
+              <span>Exp: <b>${m.exposures}</b> · Conv: <b>${m.conversions}</b> (${pct(m.conversion_rate)})</span>
+              <span class="${m.errors > 0 ? 'neg' : ''}">Err: <b>${m.errors}</b> (${pct(m.error_rate)})</span>
+            </div>
+            <div class="bar-bg"><div class="bar-fill" style="width:${Math.min(100, m.conversion_rate * 100)}%"></div></div>
+            ${m.errors > 0 ? `<div class="bar-bg"><div class="bar-fill err" style="width:${Math.min(100, m.error_rate * 100)}%"></div></div>` : ''}
+          </div>
+        `;
+
+        return `
+          <div class="deliv-card">
+            <div class="deliv-header">
+              <div>
+                <div class="deliv-title">${esc(d.name)} <span class="badge ${esc(d.stage)}">${esc(d.stage)}</span>
+                  ${holdReason ? `<span class="badge degraded" title="${esc(holdReason)}">HELD</span>` : ''}
+                  ${slice ? `<span class="chip">slice ${slice[0]+1}/${slice[1]}</span>` : ''}
+                </div>
+                <div class="mono">${esc(d.id)} · ${esc(d.capability)} ${d.goal_ref ? '· ' + esc(d.goal_ref) : ''}</div>
+                ${holdReason ? `<div class="mono" style="color:var(--amber); margin-top:4px;">⏸ ${esc(holdReason)}</div>` : ''}
+              </div>
+              <div class="mono">
+                Lift: <b class="${a.conversion_lift >= 0 ? 'pos' : 'neg'}">${a.conversion_lift >= 0 ? '+' : ''}${pct(a.conversion_lift)}</b>
+                · Judge: <b>${esc(j.action)}</b>
+              </div>
+            </div>
+            <div class="pipeline">${stepsHtml}</div>
+            <div class="variants-grid">
+              ${renderVariant(d.control, a.control)}
+              ${renderVariant(d.candidate, a.candidate)}
+            </div>
+            <div class="wiring-row">
+              <div>
+                Wiring: stg_tenants=[${esc((d.wiring.stg_tenants||[]).join(', '))}] ·
+                stg_cohorts=[${esc((d.wiring.stg_cohorts||[]).join(', '))}] ·
+                rollout=${d.wiring.rollout_pct}% ·
+                guardrail max_err=${pct(d.guardrails.max_error_rate)}
+              </div>
+              <div class="actions-row">
+                ${policy.strategy === 'human_pick' && holdReason ? `<button class="primary" onclick="pickDeliverable('${esc(p.project)}','${esc(d.id)}')">Pick for Release</button>` : ''}
+                ${d.stage === 'stg' ? `<button onclick="setStage('${esc(d.id)}','ab_test')">Start A/B</button>` : ''}
+                ${d.stage === 'ab_test' ? `<button onclick="setStage('${esc(d.id)}','rollout')">Start Rollout</button>` : ''}
+                ${d.stage === 'rollout' ? `<button onclick="setStage('${esc(d.id)}','promoted')">Promote 100%</button>` : ''}
+                ${d.stage !== 'rolled_back' && d.stage !== 'promoted' ? `<button class="danger" onclick="setStage('${esc(d.id)}','rolled_back')">Rollback</button>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function setStrategy(project, strategy) {
+      await fetch(`/api/projects/${encodeURIComponent(project)}/policy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ strategy })
+      });
+      refresh();
+    }
+
+    async function pickDeliverable(project, id) {
+      await fetch(`/api/projects/${encodeURIComponent(project)}/policy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pick: id })
+      });
+      refresh();
+    }
+
+    async function setStage(id, stage) {
+      await fetch(`/api/deliverables/${id}/stage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ stage, reason: "dashboard_operator" })
+      });
+      refresh();
+    }
+
+    async function runTick() {
+      await fetch("/api/tick", { method: "POST" });
+      refresh();
+    }
+
+    function pushFeed(ev) {
+      feedEvents.unshift(ev);
+      if (feedEvents.length > 50) feedEvents.pop();
+      document.getElementById("event-count").textContent = feedEvents.length + " events";
+      document.getElementById("feed-list").innerHTML = feedEvents.map(e => `
+        <div class="feed-item">
+          <span><b>${esc(e.kind)}</b> <span class="mono">${esc((e.deliverable_id || '').slice(0, 10))}</span></span>
+          <span class="mono">#${esc(e.seq ?? '')}</span>
+        </div>
+      `).join("");
+    }
+
+    function connectSSE() {
+      const dot = document.getElementById("sse-dot");
+      const status = document.getElementById("sse-status");
+      const es = new EventSource("/api/stream?after=0");
+      es.onopen = () => {
+        dot.className = "dot live";
+        status.textContent = "SSE Live";
+      };
+      es.onmessage = (msg) => {
+        try {
+          const ev = JSON.parse(msg.data);
+          pushFeed(ev);
+          refresh();
+        } catch (_) {}
+      };
+      es.onerror = () => {
+        dot.className = "dot err";
+        status.textContent = "SSE Reconnecting…";
+      };
+    }
+
+    refresh();
+    connectSSE();
+  </script>
+</body>
+</html>

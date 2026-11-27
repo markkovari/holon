@@ -1,0 +1,56 @@
+// delivery:sdlc — app-agnostic E2E deliverable tracking & context-based wiring contract.
+//
+// Any Holon domain app (vet-clinic, checkout, link-shortener, etc.) can adopt
+// full-SDLC parallel delivery by importing `router` (or calling the HTTP API)
+// without coupling the SDLC control plane to domain-specific logic.
+package delivery:sdlc@0.1.0;
+
+interface types {
+    /// Lifecycle stage of a deliverable.
+    enum stage {
+        draft,
+        gated,
+        stg,
+        ab-test,
+        rollout,
+        promoted,
+        rolled-back,
+    }
+
+    /// Request/user context used to resolve which component variant handles a call.
+    record user-context {
+        tenant: string,
+        subject: string,
+        cohort: string,
+        /// "prod" (default) or "stg"
+        stage: string,
+    }
+
+    /// Resolved component variant and provenance for a given user context.
+    record wiring-decision {
+        /// "control" | "candidate"
+        role: string,
+        variant-id: string,
+        digest: string,
+        /// e.g. "prod_control", "stg_stage_header", "ab_experiment", "gradual_rollout", "promoted"
+        reason: string,
+    }
+
+    variant delivery-error {
+        not-found,
+        conflict(string),
+        invalid-input(string),
+        backend-unavailable(string),
+    }
+}
+
+/// Context-based strategic component wiring router consumed by domain apps.
+interface router {
+    use types.{delivery-error, user-context, wiring-decision};
+
+    /// Resolve which variant (`control` or `candidate`) should handle `ctx`
+    /// for `deliverable-id` given its current SDLC stage, overrides, A/B split,
+    /// and rollout percentage.
+    resolve: func(deliverable-id: string, ctx: user-context)
+        -> result<wiring-decision, delivery-error>;
+}
