@@ -1,0 +1,11 @@
+name = "coffee-stamp"
+domain = "coffee.example.com"
+artifact = "components/target/coffee_stamp_domain.composed.wasm"
+port = 3092
+
+kv = "sqlite"
+
+[config]
+shop-name = "Roast & Ritual Coffee"
+stamps-required = "8"
+token-ttl-secs = "300"

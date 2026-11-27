@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Roast & Ritual — QR Coffee Stamp Card</title>
+<style>
+  :root {
+    --bg: #17120f;
+    --card: #241c17;
+    --card-2: #2f241d;
+    --accent: #d98a3c;
+    --accent-2: #f4c47a;
+    --ok: #4ade80;
+    --text: #f7efe8;
+    --muted: #b5a395;
+    --border: #3d2e24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(circle at top, #2a1e16 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px 16px 48px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .cup { font-size: 28px; }
+  .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.2px; }
+  .brand p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+  .tabs {
+    display: flex; background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 4px; gap: 4px;
+  }
+  .tabs button {
+    border: 0; background: transparent; color: var(--muted); padding: 8px 14px;
+    border-radius: 7px; font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  .tabs button.active { background: var(--accent); color: #1a120b; }
+  .panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 20px; margin-bottom: 16px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+  }
+  h2 { margin: 0 0 12px; font-size: 16px; color: var(--accent-2); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  input, select {
+    background: var(--card-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; font-size: 14px; flex: 1; min-width: 140px;
+  }
+  button.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #1b120b; border: 0; border-radius: 10px; padding: 10px 16px;
+    font-weight: 700; cursor: pointer; font-size: 14px;
+  }
+  button.secondary {
+    background: var(--card-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .punch-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0;
+  }
+  .slot {
+    aspect-ratio: 1; border-radius: 14px; border: 2px dashed var(--border);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: 26px; background: rgba(255,255,255,0.02); transition: transform 0.2s, border-color 0.2s;
+  }
+  .slot.filled {
+    border: 2px solid var(--accent); background: rgba(217,138,60,0.16);
+    transform: scale(1.02);
+  }
+  .slot small { font-size: 10px; color: var(--muted); margin-top: 4px; }
+  .progress {
+    height: 8px; background: var(--card-2); border-radius: 99px; overflow: hidden; margin-bottom: 10px;
+  }
+  .progress > div {
+    height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.3s ease;
+  }
+  .qr-box {
+    background: #fff; border-radius: 14px; padding: 14px; display: inline-flex;
+    flex-direction: column; align-items: center; color: #17120f; margin-top: 12px;
+  }
+  .qr-box svg { width: 200px; height: 200px; display: block; }
+  .qr-box code { font-size: 13px; font-weight: 700; margin-top: 8px; letter-spacing: 0.8px; }
+  .voucher {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    background: linear-gradient(135deg, rgba(74,222,128,0.12), rgba(217,138,60,0.12));
+    border: 1px solid rgba(74,222,128,0.4); border-radius: 14px; padding: 14px; margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .voucher.redeemed { opacity: 0.55; border-color: var(--border); background: var(--card-2); }
+  .badge {
+    display: inline-block; padding: 3px 8px; border-radius: 99px; font-size: 11px; font-weight: 700;
+    background: rgba(74,222,128,0.2); color: var(--ok);
+  }
+  .badge.used { background: rgba(181,163,149,0.2); color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  .stat { background: var(--card-2); border-radius: 12px; padding: 12px; text-align: center; }
+  .stat b { display: block; font-size: 22px; color: var(--accent-2); }
+  .stat span { font-size: 11px; color: var(--muted); }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #2f241d; border: 1px solid var(--accent); color: var(--text);
+    padding: 10px 18px; border-radius: 99px; font-size: 13px; font-weight: 600;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45); display: none; z-index: 99;
+  }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="cup">☕</div>
+      <div>
+        <h1 id="shopTitle">Roast & Ritual Coffee</h1>
+        <p id="shopSub">Scan QR at the counter · Collect 8 stamps → Free Coffee</p>
+      </div>
+    </div>
+    <div class="tabs">
+      <button id="tabCustomer" class="active" onclick="switchTab('customer')">Customer Card</button>
+      <button id="tabBarista" onclick="switchTab('barista')">Barista Counter</button>
+    </div>
+  </header>
+
+  <!-- CUSTOMER VIEW -->
+  <section id="viewCustomer">
+    <div id="loginPanel" class="panel">
+      <h2>Open Your Loyalty Stamp Card</h2>
+      <p class="muted">Enter your name & email to start collecting stamps (returning emails load your saved card).</p>
+      <div class="row" style="margin-top:10px">
+        <input id="custName" placeholder="Your name (e.g. Maya)" />
+        <input id="custEmail" placeholder="Email (e.g. maya@coffee.test)" type="email" />
+        <button class="primary" onclick="openCard()">Open Card</button>
+      </div>
+    </div>
+
+    <div id="cardPanel" class="panel hidden">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <h2 id="cardOwner" style="margin-bottom:2px"></h2>
+          <div class="muted" id="cardProgressText"></div>
+        </div>
+        <button class="secondary" onclick="signOut()">Switch Account</button>
+      </div>
+      <div class="progress" style="margin-top:12px"><div id="progressFill" style="width:0%"></div></div>
+      <div id="punchGrid" class="punch-grid"></div>
+
+      <h2 style="margin-top:16px">Scan / Claim Counter QR</h2>
+      <div class="row">
+        <input id="claimCodeInput" placeholder="Paste STAMP-XXXXXXXX or scan QR" />
+        <button class="primary" onclick="claimStamp()">Claim Stamp</button>
+      </div>
+    </div>
+
+    <div id="vouchersPanel" class="panel hidden">
+      <h2>Your Free Coffee Vouchers</h2>
+      <div id="voucherList" class="muted">Collect stamps to unlock your first free coffee!</div>
+    </div>
+  </section>
+
+  <!-- BARISTA COUNTER VIEW -->
+  <section id="viewBarista" class="hidden">
+    <div class="panel">
+      <h2>Counter Stats</h2>
+      <div id="statsGrid" class="stats"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Mint Stamp QR for Customer</h2>
+      <div class="row">
+        <select id="drinkSelect">
+          <option>Oat Flat White</option>
+          <option>Double Espresso</option>
+          <option>Iced Caramel Latte</option>
+          <option>Pour-Over Single Origin</option>
+          <option>Ceremonial Matcha</option>
+        </select>
+        <select id="stampCount" style="max-width:160px">
+          <option value="1">1 Stamp</option>
+          <option value="2">2 Stamps (Bonus)</option>
+        </select>
+        <button class="primary" onclick="issueStampQr()">Generate Stamp QR</button>
+      </div>
+      <div id="issuedQrWrap" class="hidden" style="margin-top:14px">
+        <div class="row" style="align-items:flex-start; gap:18px">
+          <div class="qr-box">
+            <div id="issuedQrSvg"></div>
+            <code id="issuedCode"></code>
+          </div>
+          <div style="flex:1; min-width:200px">
+            <p class="muted" id="issuedMeta"></p>
+            <p class="muted" style="word-break:break-all; font-size:12px" id="issuedUrl"></p>
+            <button class="secondary" onclick="simulateScan()">Simulate Customer Scan →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Redeem Customer Free Coffee Voucher</h2>
+      <div class="row">
+        <input id="redeemCodeInput" placeholder="Scan or enter FREE-XXXXXXXX" />
+        <button class="primary" onclick="redeemVoucher()">Redeem Free Coffee</button>
+      </div>
+    </div>
+  </section>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+let cfg = { shopName: "Roast & Ritual Coffee", stampsRequired: 8 };
+let activeCardId = localStorage.getItem("coffee_card_id") || "";
+let lastIssuedCode = "";
+
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(window._t);
+  window._t = setTimeout(() => el.style.display = "none", 3200);
+}
+
+function switchTab(tab) {
+  document.getElementById("viewCustomer").classList.toggle("hidden", tab !== "customer");
+  document.getElementById("viewBarista").classList.toggle("hidden", tab !== "barista");
+  document.getElementById("tabCustomer").classList.toggle("active", tab === "customer");
+  document.getElementById("tabBarista").classList.toggle("active", tab === "barista");
+  if (tab === "barista") loadStats();
+  if (tab === "customer" && activeCardId) loadCard();
+}
+
+async function init() {
+  const r = await fetch("/api/config");
+  cfg = await r.json();
+  document.getElementById("shopTitle").textContent = cfg.shopName;
+  document.getElementById("shopSub").textContent =
+    `Scan QR at the counter · Collect ${cfg.stampsRequired} stamps → Free Coffee`;
+
+  const params = new URLSearchParams(location.search);
+  const claim = params.get("claim");
+  if (claim) {
+    document.getElementById("claimCodeInput").value = claim;
+    history.replaceState({}, "", "/");
+  }
+  if (activeCardId) {
+    await loadCard();
+    if (claim) await claimStamp();
+  }
+}
+
+async function openCard() {
+  const name = document.getElementById("custName").value.trim();
+  const email = document.getElementById("custEmail").value.trim();
+  const r = await fetch("/api/cards", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, email }),
+  });
+  const d = await r.json();
+  if (!r.ok) return toast(d.error || "Failed to open card");
+  activeCardId = d.card.id;
+  localStorage.setItem("coffee_card_id", activeCardId);
+  toast(d.created ? "Welcome! Your stamp card is ready." : "Welcome back!");
+  await loadCard();
+  if (document.getElementById("claimCodeInput").value.trim()) await claimStamp();
+}
+
+function signOut() {
+  localStorage.removeItem("coffee_card_id");
+  activeCardId = "";
+  document.getElementById("loginPanel").classList.remove("hidden");
+  document.getElementById("cardPanel").classList.add("hidden");
+  document.getElementById("vouchersPanel").classList.add("hidden");
+}
+
+async function loadCard() {
+  const r = await fetch(`/api/cards/${activeCardId}`);
+  if (!r.ok) return signOut();
+  const d = await r.json();
+  document.getElementById("loginPanel").classList.add("hidden");
+  document.getElementById("cardPanel").classList.remove("hidden");
+  document.getElementById("vouchersPanel").classList.remove("hidden");
+  document.getElementById("cardOwner").textContent = `${d.card.customerName}'s Stamp Card`;
+  document.getElementById("cardProgressText").textContent =
+    `${d.card.stamps} / ${d.stampsRequired} stamps · ${d.stampsRemaining} more until your next free coffee!`;
+  document.getElementById("progressFill").style.width =
+    `${Math.min(100, (d.card.stamps / d.stampsRequired) * 100)}%`;
+
+  const grid = document.getElementById("punchGrid");
+  grid.innerHTML = "";
+  for (let i = 1; i <= d.stampsRequired; i++) {
+    const filled = i <= d.card.stamps;
+    const isLast = i === d.stampsRequired;
+    const slot = document.createElement("div");
+    slot.className = "slot" + (filled ? " filled" : "");
+    slot.innerHTML = `${filled ? "☕" : (isLast ? "🎁" : "○")}<small>${isLast ? "FREE" : "#" + i}</small>`;
+    grid.appendChild(slot);
+  }
+
+  const vl = document.getElementById("voucherList");
+  if (!d.vouchers.length) {
+    vl.innerHTML = `<span class="muted">No vouchers yet — keep scanning!</span>`;
+  } else {
+    vl.innerHTML = d.vouchers.map(v => `
+      <div class="voucher ${v.redeemed ? "redeemed" : ""}">
+        <div>
+          <div style="font-weight:700; font-size:15px">Free Coffee Reward · <code>${v.code}</code></div>
+          <span class="badge ${v.redeemed ? "used" : ""}">${v.redeemed ? "REDEEMED" : "READY TO REDEEM"}</span>
+        </div>
+        ${v.redeemed ? "" : `<img src="/api/vouchers/${v.code}/qr.svg" width="96" height="96" style="background:#fff;padding:6px;border-radius:10px" />`}
+      </div>
+    `).join("");
+  }
+}
+
+async function claimStamp() {
+  const code = document.getElementById("claimCodeInput").value.trim();
+  if (!code || !activeCardId) return toast("Enter a stamp code first");
+  const r = await fetch(`/api/cards/${activeCardId}/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const d = await r.json();
+  if (!r.ok) return toast(`Could not claim: ${d.error}`);
+  document.getElementById("claimCodeInput").value = "";
+  if (d.vouchersEarned && d.vouchersEarned.length) {
+    toast(`🎉 Free Coffee unlocked! Voucher ${d.vouchersEarned[0].code}`);
+  } else {
+    toast(`☕ +${d.stampsAdded} stamp collected! (${d.card.stamps}/${d.stampsRequired})`);
+  }
+  await loadCard();
+}
+
+async function issueStampQr() {
+  const drink = document.getElementById("drinkSelect").value;
+  const stamps = Number(document.getElementById("stampCount").value);
+  const r = await fetch("/api/barista/stamp-qr", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ drink, stamps, origin: location.origin }),
+  });
+  const d = await r.json();
+  if (!r.ok) return toast(d.error || "Failed to mint QR");
+  lastIssuedCode = d.token.code;
+  document.getElementById("issuedQrSvg").innerHTML = d.qrSvg;
+  document.getElementById("issuedCode").textContent = d.token.code;
+  document.getElementById("issuedMeta").textContent =
+    `${d.token.drink} · +${d.token.stamps} stamp(s) · single-use QR`;
+  document.getElementById("issuedUrl").textContent = d.claimUrl;
+  document.getElementById("issuedQrWrap").classList.remove("hidden");
+  toast(`Issued ${d.token.code}`);
+  loadStats();
+}
+
+function simulateScan() {
+  if (!lastIssuedCode) return;
+  document.getElementById("claimCodeInput").value = lastIssuedCode;
+  switchTab("customer");
+  if (activeCardId) claimStamp();
+  else toast("Open a customer card to claim the scanned QR!");
+}
+
+async function redeemVoucher() {
+  const code = document.getElementById("redeemCodeInput").value.trim();
+  if (!code) return toast("Enter voucher code");
+  const r = await fetch("/api/barista/redeem", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const d = await r.json();
+  if (!r.ok) return toast(`Cannot redeem: ${d.error}`);
+  document.getElementById("redeemCodeInput").value = "";
+  toast(`✅ Free coffee redeemed for ${d.voucher.customerName}!`);
+  loadStats();
+}
+
+async function loadStats() {
+  const r = await fetch("/api/stats");
+  const s = await r.json();
+  document.getElementById("statsGrid").innerHTML = `
+    <div class="stat"><b>${s.totalMembers}</b><span>Loyalty Members</span></div>
+    <div class="stat"><b>${s.totalStampsIssued}</b><span>Stamps Issued</span></div>
+    <div class="stat"><b>${s.activeVouchers}</b><span>Active Free Coffees</span></div>
+    <div class="stat"><b>${s.freeCoffeesRedeemed}</b><span>Coffees Redeemed</span></div>
+  `;
+}
+
+init();
+</script>
+</body>
+</html>
