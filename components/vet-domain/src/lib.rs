@@ -38,6 +38,11 @@ mod bindings {
             "../scheduler-timer/wit",
             "../lock-mutex/wit",
             "../event-bus/wit",
+            "../rrule/wit",
+            "../ical/wit",
+            "../pdf/wit",
+            "../qr/wit",
+            "../svg-chart/wit",
             "../../wit/ui-assets",
             "wit",
         ],
@@ -51,6 +56,7 @@ mod bindings {
     }
 }
 
+mod clinical;
 mod datetime;
 
 use serde::Deserialize;
@@ -147,12 +153,36 @@ impl Guest for Component {
                     return serve_pet_photo(&request, id);
                 }
                 (Method::Post, ["pets", id, "photo"]) => upload_pet_photo(request, id).await,
+                (Method::Get, ["pets", id, "vaccinations"]) => {
+                    clinical::list_vaccinations(&request, id)
+                }
+                (Method::Post, ["pets", id, "vaccinations"]) => {
+                    clinical::add_vaccination(request, id).await
+                }
+                (Method::Get, ["pets", id, "calendar.ics"]) => {
+                    clinical::pet_calendar_ics(&request, id)
+                }
+                (Method::Get, ["pets", id, "certificate.pdf"]) => {
+                    clinical::pet_certificate_pdf(&request, id)
+                }
+                (Method::Get, ["pets", id, "qr.svg"]) => clinical::pet_qr_svg(&request, id),
+                (Method::Get, ["pets", id, "vitals"]) => clinical::list_vitals(&request, id),
+                (Method::Post, ["pets", id, "vitals"]) => clinical::add_vitals(request, id).await,
+                (Method::Get, ["pets", id, "vitals", "chart.svg"]) => {
+                    clinical::pet_vitals_chart_svg(&request, id, &query)
+                }
 
                 (Method::Delete, ["appointments", id]) => delete_appointment(&request, id),
                 (Method::Post, ["appointments", id, "transition"]) => {
                     transition_appointment(request, id).await
                 }
+                (Method::Get, ["appointments", id, "calendar.ics"]) => {
+                    clinical::appointment_calendar_ics(&request, id)
+                }
                 (Method::Get, ["appointments", id, "invoice"]) => get_invoice(&request, id),
+                (Method::Get, ["appointments", id, "invoice.pdf"]) => {
+                    clinical::appointment_invoice_pdf(&request, id)
+                }
                 (Method::Put, ["appointments", id, "invoice"]) => put_invoice(request, id).await,
                 (Method::Post, ["appointments", id, "notes"]) => add_note(request, id).await,
                 (Method::Get, ["appointments", id, "notes"]) => list_notes(&request, id),
