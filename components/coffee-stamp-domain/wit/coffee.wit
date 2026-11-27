@@ -1,0 +1,16 @@
+// coffee:stamp — coffee shop QR loyalty stamp card domain.
+//
+// Baristas mint single-use QR stamp tokens at the counter; customers scan them
+// to collect stamps on their punch card. Reaching `stamps-required` (default 8)
+// automatically unlocks a scannable Free Coffee reward voucher.
+package coffee:stamp@0.1.0;
+
+world coffee-stamp-domain {
+    export wasi:http/handler@0.3.0;
+
+    import records:store/store@0.1.0;
+    import id:generate/generator@0.1.0;
+    import qr:encode/encoder@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import wasi:clocks/system-clock@0.3.0;
+}
