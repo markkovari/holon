@@ -78,7 +78,7 @@ pub fn hotp_at(secret : String, counter : UInt64, digits : Byte) -> Result[Strin
 
 pub fn recovery_codes(count : UInt) -> Array[String] {
   let n = count.to_int()
-  let codes = Array::new()
+  let codes = Array()
   for i = 0; i < n; i = i + 1 {
     let raw = @random.get_random_bytes(5UL)
     let b32 = @core.base32_encode(raw).to_lower()

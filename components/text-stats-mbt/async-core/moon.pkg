@@ -1,6 +1,5 @@
 import {
   "moonbitlang/core/deque",
-  "moonbitlang/core/ref",
   "moonbitlang/core/set",
 }
 

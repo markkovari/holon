@@ -22,7 +22,7 @@ pub fn svg(data : String, level : Ecc, quiet_zone : UInt) -> Result[String, QrEr
   let w = qr.size()
   let qz = quiet_zone.to_int()
   let dim = w + 2 * qz
-  let path = StringBuilder::new()
+  let path = StringBuilder()
   for y = 0; y < w; y = y + 1 {
     for x = 0; x < w; x = x + 1 {
       if qr.get(y, x) {
@@ -51,7 +51,7 @@ pub fn unicode(data : String, level : Ecc) -> Result[String, QrError] {
       false
     }
   }
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   let mut y = -1
   while y < w + 1 {
     for x = -1; x < w + 1; x = x + 1 {
@@ -79,7 +79,7 @@ pub fn matrix(data : String, level : Ecc) -> Result[String, QrError] {
     None => return Err(QrError::TooLong("Failed to encode QR code: input too long"))
   }
   let w = qr.size()
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   out.write_string("{\"size\":")
   out.write_string(w.to_string())
   out.write_string(",\"modules\":[")

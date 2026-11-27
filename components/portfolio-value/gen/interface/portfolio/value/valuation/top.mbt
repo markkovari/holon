@@ -5,12 +5,10 @@
 /// A swap is two events, not one: what left is a disposal at the agreed value
 /// and what arrived is an acquisition at that same value, so a trade where you
 /// got the better end shows up as a gain.
+#derive(Debug)
 pub(all) enum EventKind {
       ACQUIRED; DISPOSED
-} derive(Show)
-///|
-#deprecated
-pub extend EventKind with Show::{to_string, output}
+}
 
 ///|
 pub fn EventKind::ordinal(self : EventKind) -> Int {
@@ -30,53 +28,43 @@ pub fn EventKind::from(self : Int) -> EventKind {
 }
 ///|
 /// One thing that happened to one item.
+#derive(Debug)
 pub(all) struct Event {
       item_id : String; kind : EventKind; quantity : UInt; unit_minor : Int64; currency : String; at : UInt64
-} derive(Show)
-///|
-#deprecated
-pub extend Event with Show::{to_string, output}
+}
 
 ///|
 /// The latest known price for an item at some instant.
+#derive(Debug)
 pub(all) struct Quote {
       item_id : String; unit_minor : Int64; currency : String; at : UInt64
-} derive(Show)
-///|
-#deprecated
-pub extend Quote with Show::{to_string, output}
+}
 
 ///|
 /// What a collection is worth, and how it got there.
+#derive(Debug)
 pub(all) struct Valuation {
       cost_basis_minor : Int64; market_value_minor : Int64; unrealised_minor : Int64; realised_minor : Int64; currency : String; unquoted : UInt
-} derive(Show)
-///|
-#deprecated
-pub extend Valuation with Show::{to_string, output}
+}
 
 ///|
 /// One sample on the value chart.
+#derive(Debug)
 pub(all) struct Point {
       at : UInt64; market_value_minor : Int64; cost_basis_minor : Int64; realised_minor : Int64; unquoted : UInt
-} derive(Show)
-///|
-#deprecated
-pub extend Point with Show::{to_string, output}
+}
 
 ///|
 /// Why a valuation could not be produced. Every one of these is a silent wrong
 /// number if it is absorbed instead of refused.
+#derive(Debug)
 pub(all) suberror ValueError {
       MixedCurrency((String, String))
       OversoldAt((String, UInt64, UInt, UInt))
       ZeroQuantity((String, UInt64))
       ZeroStep
       Empty
-} derive(Show)
-///|
-#deprecated
-pub extend ValueError with Show::{to_string, output}
+}
 
 ///|
 /// What the collection is worth at `at`. Events after it are ignored, which is

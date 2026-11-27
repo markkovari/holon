@@ -111,12 +111,12 @@ test "a real deflated xlsx reads back" {
       assert_true(found_content_types)
 
       let sheet1 = files.filter(fn(f) { f.name == "xl/worksheets/sheet1.xml" })[0]
-      let sheet_str = @utf8.decode_lossy(Bytes::from_fixedarray(sheet1.data)[:])
+      let sheet_str = @utf8.decode_lossy(Bytes::from_array(sheet1.data)[:])
       assert_true(sheet_str.has_prefix("<?xml"))
       assert_true(sheet_str.contains("<sheetData>"))
 
       let sst = files.filter(fn(f) { f.name == "xl/sharedStrings.xml" })[0]
-      let sst_str = @utf8.decode_lossy(Bytes::from_fixedarray(sst.data)[:])
+      let sst_str = @utf8.decode_lossy(Bytes::from_array(sst.data)[:])
       assert_true(sst_str.contains("<t>Charizard</t>"))
     }
     Err(_) => panic()

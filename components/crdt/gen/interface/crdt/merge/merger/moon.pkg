@@ -2,4 +2,4 @@ import {
   "moonbitlang/core/json",
 }
 
-warnings = "-44"
+warnings = "-44-78-25"

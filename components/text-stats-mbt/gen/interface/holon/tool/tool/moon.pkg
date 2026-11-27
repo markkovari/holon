@@ -1,5 +1,5 @@
 import {
-  "holon/text-stats/tool",
+  "holon/text-stats/tool" @tool_impl,
 }
 
 warnings = "-44"

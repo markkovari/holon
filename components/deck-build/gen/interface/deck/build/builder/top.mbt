@@ -2,12 +2,10 @@
 ///|
 /// What a card is, for the rules that care. The collection knows far more about
 /// a card than this; a deck only needs what the format restricts.
+#derive(Debug)
 pub(all) enum CardKind {
       BASIC_POKEMON; EVOLVED_POKEMON; TRAINER; BASIC_ENERGY; SPECIAL_ENERGY
-} derive(Show)
-///|
-#deprecated
-pub extend CardKind with Show::{to_string, output}
+}
 
 ///|
 pub fn CardKind::ordinal(self : CardKind) -> Int {
@@ -33,63 +31,51 @@ pub fn CardKind::from(self : Int) -> CardKind {
 }
 ///|
 /// One line of a deck list.
+#derive(Debug)
 pub(all) struct Slot {
       card_id : String; name : String; kind : CardKind; quantity : UInt
-} derive(Show)
-///|
-#deprecated
-pub extend Slot with Show::{to_string, output}
+}
 
 ///|
 /// What you already own, by printing.
+#derive(Debug)
 pub(all) struct Owned {
       card_id : String; quantity : UInt
-} derive(Show)
-///|
-#deprecated
-pub extend Owned with Show::{to_string, output}
+}
 
 ///|
 /// The market price of one printing, in minor units.
+#derive(Debug)
 pub(all) struct Price {
       card_id : String; unit_minor : Int64; currency : String
-} derive(Show)
-///|
-#deprecated
-pub extend Price with Show::{to_string, output}
+}
 
 ///|
 /// Why a deck is not legal. EVERY applicable one is returned, because a builder
 /// that reports one problem per attempt makes you submit five times to learn
 /// five things.
+#derive(Debug)
 pub(all) enum Illegal {
       WrongSize(UInt)
       TooManyOfAName((String, UInt))
       NoBasicPokemon
       ZeroQuantity(String)
-} derive(Show)
-///|
-#deprecated
-pub extend Illegal with Show::{to_string, output}
+}
 
 ///|
 /// One line of what you still have to buy.
+#derive(Debug)
 pub(all) struct Missing {
       card_id : String; name : String; quantity : UInt; cost_minor : Int64?
-} derive(Show)
-///|
-#deprecated
-pub extend Missing with Show::{to_string, output}
+}
 
 ///|
 /// What it would take to build a deck you do not fully own.
 /// (`shortfall` is the function's name, so the record carries `-report`.)
+#derive(Debug)
 pub(all) struct ShortfallReport {
       missing : Array[Missing]; cost_minor : Int64; currency : String; unpriced : UInt
-} derive(Show)
-///|
-#deprecated
-pub extend ShortfallReport with Show::{to_string, output}
+}
 
 ///|
 /// Every reason this deck is not legal, or an empty list.

@@ -150,11 +150,11 @@ pub fn extract(bytes : FixedArray[Byte]) -> Result[Array[File], ZipError] {
     None => return Err(NotAZip)
   }
   let count = match u16at(bytes, eocd + 10) {
-    Ok(v) => v.to_int()
+    Ok(v) => v.reinterpret_as_int()
     Err(e) => return Err(e)
   }
   let mut at = match u32at(bytes, eocd + 16) {
-    Ok(v) => v.to_int()
+    Ok(v) => v.reinterpret_as_int()
     Err(e) => return Err(e)
   }
 
@@ -176,27 +176,27 @@ pub fn extract(bytes : FixedArray[Byte]) -> Result[Array[File], ZipError] {
       Err(e) => return Err(e)
     }
     let compressed = match u32at(bytes, at + 20) {
-      Ok(v) => v.to_int()
+      Ok(v) => v.reinterpret_as_int()
       Err(e) => return Err(e)
     }
     let _uncompressed = match u32at(bytes, at + 24) {
-      Ok(v) => v.to_int()
+      Ok(v) => v.reinterpret_as_int()
       Err(e) => return Err(e)
     }
     let name_len = match u16at(bytes, at + 28) {
-      Ok(v) => v.to_int()
+      Ok(v) => v.reinterpret_as_int()
       Err(e) => return Err(e)
     }
     let extra_len = match u16at(bytes, at + 30) {
-      Ok(v) => v.to_int()
+      Ok(v) => v.reinterpret_as_int()
       Err(e) => return Err(e)
     }
     let comment_len = match u16at(bytes, at + 32) {
-      Ok(v) => v.to_int()
+      Ok(v) => v.reinterpret_as_int()
       Err(e) => return Err(e)
     }
     let local_hdr = match u32at(bytes, at + 42) {
-      Ok(v) => v.to_int()
+      Ok(v) => v.reinterpret_as_int()
       Err(e) => return Err(e)
     }
 
@@ -207,7 +207,7 @@ pub fn extract(bytes : FixedArray[Byte]) -> Result[Array[File], ZipError] {
     for i in 0..<name_len {
       name_slice[i] = bytes[at + 46 + i]
     }
-    let name = @utf8.decode_lossy(Bytes::from_fixedarray(name_slice)[:])
+    let name = @utf8.decode_lossy(Bytes::from_array(name_slice)[:])
     at = at + 46 + name_len + extra_len + comment_len
 
     if name.has_suffix("/") {
@@ -222,11 +222,11 @@ pub fn extract(bytes : FixedArray[Byte]) -> Result[Array[File], ZipError] {
       return Err(Truncated(local_hdr.reinterpret_as_uint()))
     }
     let l_name = match u16at(bytes, local_hdr + 26) {
-      Ok(v) => v.to_int()
+      Ok(v) => v.reinterpret_as_int()
       Err(e) => return Err(e)
     }
     let l_extra = match u16at(bytes, local_hdr + 28) {
-      Ok(v) => v.to_int()
+      Ok(v) => v.reinterpret_as_int()
       Err(e) => return Err(e)
     }
     let start = local_hdr + 30 + l_name + l_extra
@@ -241,13 +241,12 @@ pub fn extract(bytes : FixedArray[Byte]) -> Result[Array[File], ZipError] {
     let data : FixedArray[Byte] = match comp_method {
       0U => raw
       8U => {
-        let raw_bytes = Bytes::from_fixedarray(raw)
+        let raw_bytes = Bytes::from_array(raw)
         try {
           let decompressed = @flate.inflate_exact(raw_bytes[:])
           decompressed.to_fixedarray()
         } catch {
           @flate.InflateError(_, msg) => return Err(BadDeflate(msg))
-          _ => return Err(BadDeflate("corrupted deflate stream"))
         }
       }
       other => return Err(UnsupportedMethod(other))

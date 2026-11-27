@@ -239,7 +239,7 @@ pub fn spawn_component_task_current(f : async () -> Unit) -> Unit {
     task_state.lane,
     Some(spawn_component_task_current),
   )
-  task_state.owned_coroutines.add(coro)
+  task_state.owned_coroutines.insert(coro)
 }
 
 ///|
@@ -399,7 +399,7 @@ async fn waitable_event(waitable_id : Int32, immediate : Events?) -> Events {
       guard! subscriber.event is None
       waitable_join(waitable_id, waitable_set.0)
       let coro = current_coroutine()
-      subscriber.coro.add(coro)
+      subscriber.coro.insert(coro)
       defer subscriber.coro.remove(coro)
       let event = match suspend_check_cancel() {
         Continue => subscriber.event.unwrap()
@@ -466,7 +466,7 @@ pub async fn suspend_for_subtask(
   let set = @set.Set([])
   let subscriber = { event: None, coro: set, }
   let coro = current_coroutine()
-  set.add(coro)
+  set.insert(coro)
   defer {
     set.remove(coro)
     detach_waitable(task_state, task.handle)

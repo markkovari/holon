@@ -12,7 +12,7 @@ pub fn str_to_bytes(s : String) -> FixedArray[Byte] {
 }
 
 pub fn bytes_to_str(bytes : FixedArray[Byte]) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   for i = 0; i < bytes.length(); i = i + 1 {
     buf.write_char((bytes[i].to_int() & 0xFF).unsafe_to_char())
   }
@@ -20,7 +20,7 @@ pub fn bytes_to_str(bytes : FixedArray[Byte]) -> String {
 }
 
 pub fn b64_encode(bytes : FixedArray[Byte]) -> String {
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   let mut i = 0
   while i < bytes.length() {
     let remaining = bytes.length() - i
@@ -115,7 +115,7 @@ pub fn b64_decode(text : String) -> FixedArray[Byte]? {
 let hex_upper : Array[Char] = "0123456789ABCDEF".to_array()
 
 pub fn tmpl_key(name : String) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   buf.write_string("tmpl_")
   for i = 0; i < name.length(); i = i + 1 {
     let code = name[i].to_int()
@@ -164,7 +164,7 @@ pub fn parse_template(s : String) -> (String, String, String)? {
 }
 
 pub fn html_escape(s : String) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   for i = 0; i < s.length(); i = i + 1 {
     let c = (s[i].to_int() & 0xFF).unsafe_to_char()
     if c == '&' {
@@ -199,7 +199,7 @@ fn lookup(vars : Array[(String, String)], name : String) -> String? {
 }
 
 pub fn render_field(field : String, vars : Array[(String, String)], escape : Bool) -> Result[String, String] {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   let len = field.length()
   let mut i = 0
   while i < len {

@@ -39,7 +39,7 @@ test "higher ecc is denser" {
 }
 
 test "too long input errors" {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   for i = 0; i < 8000; i = i + 1 {
     buf.write_char('x')
   }

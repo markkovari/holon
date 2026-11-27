@@ -3,7 +3,7 @@
 let b32_alphabet : String = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
 pub fn base32_encode(data : FixedArray[Byte]) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   let mut buffer : UInt = 0U
   let mut bits : Int = 0
   for i = 0; i < data.length(); i = i + 1 {
@@ -36,7 +36,7 @@ fn b32_val(c : Int) -> Int? {
 }
 
 pub fn base32_decode(s : String) -> FixedArray[Byte]? {
-  let out = Array::new()
+  let out = Array()
   let mut buffer : UInt = 0U
   let mut bits : Int = 0
   for i = 0; i < s.length(); i = i + 1 {
@@ -239,7 +239,7 @@ pub fn constant_time_eq(a : String, b : String) -> Bool {
 let hex_upper : String = "0123456789ABCDEF"
 
 pub fn percent_encode(s : String) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   for i = 0; i < s.length(); i = i + 1 {
     let c = s[i].to_int()
     if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 45 || c == 95 || c == 46 || c == 126 {

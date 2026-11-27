@@ -94,7 +94,6 @@ pub fn observe(state : Circuit, now_ms : UInt64, pol : Policy, ok : Bool) -> Cir
       let new_successes = c.successes + 1U
       if new_successes >= at_least_1(pol.success_threshold) {
         c = {
-          ..c,
           state: CLOSED,
           failures: 0U,
           successes: 0U,

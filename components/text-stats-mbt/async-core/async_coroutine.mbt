@@ -178,7 +178,7 @@ async fn Coroutine::wait(target : Coroutine) -> SuspendResult {
     Fail(err) => raise err
     Running | Suspend(_) => ()
   }
-  target.downstream.add(coro)
+  target.downstream.insert(coro)
   defer target.downstream.remove(coro)
   suspend()
   target.unwrap()

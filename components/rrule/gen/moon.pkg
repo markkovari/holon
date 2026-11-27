@@ -11,11 +11,6 @@ options(
     "wasm": {
       "export-memory-name": "memory",
       "heap-start-address": 16,
-      "exports": [
-        "mbt_ffi_cabi_realloc:cabi_realloc",
-        "wasmExportExpand:rrule:recur/recur@0.1.0#expand",
-        "wasmExportExpandPostReturn:cabi_post_rrule:recur/recur@0.1.0#expand"
-      ],
     },
   },
 )
