@@ -27,9 +27,9 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 

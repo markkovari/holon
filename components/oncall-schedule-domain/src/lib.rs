@@ -27,17 +27,17 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 mod handlers;
 
 use bindings::auth::identity::session as auth_session;
 use bindings::auth::identity::types as auth_types;
-use bindings::p3::handler::Guest;
 use bindings::p3::clocks::system_clock;
+use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use serde_json::{json, Value};
 

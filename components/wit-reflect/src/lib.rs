@@ -787,7 +787,7 @@ mod tests {
         // wasm32-wasip2 artifacts come out anonymous; `cargo xtask build --force` stamps the name.
         assert_eq!(s.name, "mesh-domain", "the build's `wasm-tools metadata add` pass");
         assert_eq!(s.exports.len(), 1);
-        assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0-rc-2026-03-15"); // p3 (ADR-0103)
+        assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0"); // p3 (ADR-0103)
         let composable: Vec<&str> = s.imports.iter().map(|i| i.raw.as_str()).collect();
         assert!(composable.contains(&"records:store/store@0.1.0"));
         assert!(composable.contains(&"resilience:breaker/breaker@0.1.0"));
@@ -871,7 +871,7 @@ mod tests {
             .host_imports
             .iter()
             .any(|h| h.name == "incoming-handler" || h.namespace == "wasi"));
-        assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0-rc-2026-03-15"); // p3 (ADR-0103)
+        assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0"); // p3 (ADR-0103)
 
         // Not compared with the CLI's output: `cargo test` doesn't rebuild it, so that is e2e work.
         assert!(s.nested_instances >= 4, "socket + 3 plugs are nested in: {}", s.nested_instances);

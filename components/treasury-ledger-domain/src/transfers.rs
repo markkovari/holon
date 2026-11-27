@@ -4,8 +4,8 @@ use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::idempotency::guard::store as idem;
 use crate::bindings::ledger::doubleentry::ledger;
 use crate::bindings::money::amount::arithmetic as money;
-use crate::bindings::records::store::store as records;
 use crate::bindings::p3::http::types::Method;
+use crate::bindings::records::store::store as records;
 use crate::{Reply, Route};
 use serde_json::{json, Value};
 

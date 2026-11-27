@@ -25,9 +25,9 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
@@ -35,11 +35,11 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use bindings::otp::totp::authenticator as otp;
+use bindings::p3::clocks::system_clock;
 use bindings::qr::encode::encoder as qr;
 use bindings::records::store::store as records;
 use bindings::secrets::vault::vault;
 use bindings::session::store::store as session;
-use bindings::p3::clocks::system_clock;
 
 use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};

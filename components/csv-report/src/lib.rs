@@ -37,19 +37,19 @@ mod bindings {
     });
     /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
 use serde_json::{json, Value};
 
 use bindings::csv::codec::codec as csv;
+use bindings::p3::clocks::system_clock;
 use bindings::paginate::cursor::cursors as paginate;
 use bindings::records::store::store as records;
 use bindings::validate::schema::validator as validate;
-use bindings::p3::clocks::system_clock;
 
 use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};

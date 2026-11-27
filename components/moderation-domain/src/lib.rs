@@ -30,9 +30,9 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 mod intake;
@@ -42,11 +42,11 @@ mod verdict;
 use bindings::auth::identity::session as auth_session;
 use bindings::auth::identity::types as auth_types;
 use bindings::event::bus::bus;
+use bindings::p3::clocks::system_clock;
 use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use bindings::policy::guard::guard as policy;
 use bindings::records::store::store as records;
-use bindings::p3::clocks::system_clock;
-use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use serde_json::{json, Value};
 
 guestio::guest_p3_respond!();
@@ -251,9 +251,7 @@ impl Guest for Component {
         let (status, content_type, payload_bytes) = match reply {
             Reply::Html(s) => (200, "text/html; charset=utf-8", s.into_bytes()),
             Reply::Css(s) => (200, "text/css; charset=utf-8", s.into_bytes()),
-            Reply::Js(s) => {
-                (200, "application/javascript; charset=utf-8", s.into_bytes())
-            }
+            Reply::Js(s) => (200, "application/javascript; charset=utf-8", s.into_bytes()),
             Reply::Json(s, p) => (
                 s,
                 "application/json",

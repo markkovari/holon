@@ -24,9 +24,9 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 
@@ -35,9 +35,9 @@ use serde_json::{json, Value};
 use bindings::crdt::merge::merger as crdt;
 use bindings::diff::text::differ as textdiff;
 use bindings::id::generate::generator as ids;
-use bindings::records::store::store as records;
 use bindings::p3::clocks::monotonic_clock;
 use bindings::p3::clocks::system_clock;
+use bindings::records::store::store as records;
 
 use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
@@ -70,7 +70,9 @@ impl Guest for Component {
                     (Method::Get, ["api", "docs", doc]) => get_doc(doc),
                     (Method::Get, ["api", "docs", doc, "history"]) => get_history(doc, &path),
                     (Method::Post, ["api", "docs", doc, "ops"]) => apply_op(request, doc).await,
-                    (Method::Post, ["api", "docs", doc, "presence"]) => heartbeat(request, doc).await,
+                    (Method::Post, ["api", "docs", doc, "presence"]) => {
+                        heartbeat(request, doc).await
+                    }
                     (Method::Get, ["api", "docs", doc, "presence"]) => presence(doc),
                     _ => Outcome::Err(404, "not_found".into()),
                 };
@@ -418,7 +420,8 @@ fn store_err(e: records::StoreError) -> Outcome {
 }
 
 async fn parse_body(request: Request) -> Result<Value, Outcome> {
-    let body = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+    let body =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }

@@ -8,6 +8,6 @@
 package comp:codecprobe@0.1.0;
 
 world codec-probe {
-    export wasi:http/handler@0.3.0-rc-2026-03-15;
+    export wasi:http/handler@0.3.0;
     import bytes:codec/codec@0.1.0;
 }

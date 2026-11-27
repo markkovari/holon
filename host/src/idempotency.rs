@@ -11,7 +11,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use serde::{Deserialize, Serialize};
-use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
+use wasmtime_wasi_http::WasiBody as HyperOutgoingBody;
 
 use crate::kv::{Cas, KvBackend};
 use crate::tenant::BucketId;

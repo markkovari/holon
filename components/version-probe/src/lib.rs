@@ -19,8 +19,8 @@ mod bindings {
 }
 
 use bindings::p3::handler::Guest;
-use bindings::wasi::config::store as config;
 use bindings::p3::http::types::{ErrorCode, Request, Response};
+use bindings::wasi::config::store as config;
 
 guestio::guest_p3_respond!();
 

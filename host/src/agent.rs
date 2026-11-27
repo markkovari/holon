@@ -17,7 +17,7 @@ use crate::{Instance, Instances, Routes};
 pub const HOST_IFACES: &[&str] = &[
     "wasi:http/incoming-handler",
     "wasi:http/outgoing-handler",
-    // p3 (the `0.3.0-rc-2026-03-15` WIT on wasmtime 45): the async door and client.
+    // p3 (final `0.3.0` WIT on wasmtime 50): the async door and client.
     "wasi:http/handler",
     "wasi:http/client",
     "wasi:keyvalue/store",
@@ -466,8 +466,6 @@ async fn start(
     if let Some(nats) = &agent.nats {
         let exports = crate::rpc::exported_functions(&agent.engine, &component);
         if !exports.is_empty() {
-            let serve_client =
-                crate::rpc::client(nats.clone(), &agent.lattice, &id, Some(&id)).await?;
             let (kv, cache, sc, rem) =
                 (agent.kv.clone(), cache_backing.clone(), scope.clone(), remotes.clone());
             let engine = agent.engine.clone();
@@ -476,7 +474,9 @@ async fn start(
                 &agent.engine,
                 &component,
                 ipre,
-                &serve_client,
+                nats.clone(),
+                &agent.lattice,
+                &id,
                 move || {
                     crate::store_for(
                         &engine,

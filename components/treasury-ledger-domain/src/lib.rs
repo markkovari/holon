@@ -29,9 +29,9 @@ mod bindings {
         generate_all,
     });
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
-        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::clocks0_3_0 as clocks;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 mod reconcile;
@@ -39,11 +39,11 @@ mod transfers;
 
 use bindings::auth::identity::session as auth_session;
 use bindings::auth::identity::types as auth_types;
-use bindings::p3::handler::Guest;
 use bindings::money::amount::arithmetic as money;
-use bindings::records::store::store as records;
 use bindings::p3::clocks::system_clock;
+use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
+use bindings::records::store::store as records;
 use serde_json::{json, Value};
 
 guestio::guest_p3_respond!();

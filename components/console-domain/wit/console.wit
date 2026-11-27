@@ -49,13 +49,13 @@
 package console:app@0.1.0;
 
 world console-domain {
-    export wasi:http/handler@0.3.0-rc-2026-03-15;
+    export wasi:http/handler@0.3.0;
 
     // The SPA, embedded in its own component.
     import ui:assets/files@0.1.0;
 
     // A client of the control plane, like the CLI.
-    import wasi:http/client@0.3.0-rc-2026-03-15;
+    import wasi:http/client@0.3.0;
 
     // A goal spec is prose in git; authoring one is a pull request.
     import git:forge/repo@0.1.0;

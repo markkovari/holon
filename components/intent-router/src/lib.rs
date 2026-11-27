@@ -17,8 +17,8 @@ mod bindings {
     });
     /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
-        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::exports::wasi::http0_3_0::handler;
+        pub use super::wasi::http0_3_0 as http;
     }
 }
 

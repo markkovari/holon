@@ -16,10 +16,10 @@ options(
       "heap-start-address": 16,
       "exports": [
         "mbt_ffi_cabi_realloc:cabi_realloc",
-        "wasmExportAsyncHandle:[callback][async-lift]wasi:http/handler@0.3.0-rc-2026-03-15#handle",
+        "wasmExportAsyncHandle:[callback][async-lift]wasi:http/handler@0.3.0#handle",
         "wasmExportCall:holon:tool/tool@0.1.0#call",
         "wasmExportCallPostReturn:cabi_post_holon:tool/tool@0.1.0#call",
-        "wasmExportHandle:[async-lift]wasi:http/handler@0.3.0-rc-2026-03-15#handle",
+        "wasmExportHandle:[async-lift]wasi:http/handler@0.3.0#handle",
       ],
     },
   },

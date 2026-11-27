@@ -5,8 +5,8 @@
 //! Marking an invoice paid is `admin`-only, checked directly against
 //! `principal.roles` — a role, not a row, decides that one.
 
-use crate::bindings::records::store::store as records;
 use crate::bindings::p3::http::types::Method;
+use crate::bindings::records::store::store as records;
 use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
