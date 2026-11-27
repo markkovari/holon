@@ -7,4 +7,4 @@ options(
   "allow-experimental-packages": ["moonbitlang/core/compress/flate"],
 )
 
-warnings = "-44"
+warnings = "-44-78-25"

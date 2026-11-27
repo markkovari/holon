@@ -2,12 +2,13 @@
 /// Error correction level. Capacity order is L > M > Q > H.
 ///
 /// 纠错等级。容量顺序为 L > M > Q > H。
+#derive(Eq, Debug)
 pub(all) enum EcLevel {
   L
   M
   Q
   H
-} derive(Eq, Debug)
+}
 
 ///|
 pub impl Show for EcLevel with fn to_string(self) {
@@ -32,11 +33,12 @@ pub extend EcLevel with Show::{to_string, output}
 /// Segment mode defined by ISO/IEC 18004 Model 2.
 ///
 /// ISO/IEC 18004 Model 2 定义的段模式。
+#derive(Eq, Debug)
 pub(all) enum Mode {
   Numeric
   Alphanumeric
   Byte
-} derive(Eq, Debug)
+}
 
 ///|
 pub impl Show for Mode with fn to_string(self) {
@@ -60,6 +62,7 @@ pub extend Mode with Show::{to_string, output}
 /// Data mask patterns 0..7.
 ///
 /// 数据掩码图案 0..7。
+#derive(Eq, Debug)
 pub(all) enum Mask {
   M0
   M1
@@ -69,7 +72,7 @@ pub(all) enum Mask {
   M5
   M6
   M7
-} derive(Eq, Debug)
+}
 
 ///|
 pub impl Show for Mask with fn to_string(self) {

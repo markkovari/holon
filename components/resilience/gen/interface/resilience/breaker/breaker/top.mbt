@@ -8,12 +8,10 @@
 /// * `half-open` — cooldown elapsed: a limited number of PROBE calls are
 ///                 admitted to test whether the upstream recovered. Enough
 ///                 probe successes close it; one probe failure re-opens it.
+#derive(Debug)
 pub(all) enum CircuitState {
       CLOSED; OPEN; HALF_OPEN
-} derive(Show)
-///|
-#deprecated
-pub extend CircuitState with Show::{to_string, output}
+}
 
 ///|
 pub fn CircuitState::ordinal(self : CircuitState) -> Int {
@@ -35,40 +33,32 @@ pub fn CircuitState::from(self : Int) -> CircuitState {
 }
 ///|
 /// How the breaker trips and recovers.
+#derive(Debug)
 pub(all) struct Policy {
       failure_threshold : UInt; window_ms : UInt64; open_ms : UInt64; half_open_probes : UInt; success_threshold : UInt
-} derive(Show)
-///|
-#deprecated
-pub extend Policy with Show::{to_string, output}
+}
 
 ///|
 /// The circuit's persisted state. A zeroed record (`closed`, all counters 0)
 /// is the correct starting value for a key that has never been called.
+#derive(Debug)
 pub(all) struct Circuit {
       state : CircuitState; failures : UInt; successes : UInt; window_start_ms : UInt64; changed_ms : UInt64; probes : UInt
-} derive(Show)
-///|
-#deprecated
-pub extend Circuit with Show::{to_string, output}
+}
 
 ///|
 /// The verdict for one attempt.
+#derive(Debug)
 pub(all) struct Admission {
       admit : Bool; state : CircuitState; retry_after_ms : UInt64
-} derive(Show)
-///|
-#deprecated
-pub extend Admission with Show::{to_string, output}
+}
 
 ///|
 /// How to space retries of a failed call.
+#derive(Debug)
 pub(all) struct RetryPolicy {
       max_attempts : UInt; base_ms : UInt; factor_pct : UInt; max_ms : UInt; jitter : Bool
-} derive(Show)
-///|
-#deprecated
-pub extend RetryPolicy with Show::{to_string, output}
+}
 
 ///|
 /// Ask permission before making the call. Returns the verdict and the

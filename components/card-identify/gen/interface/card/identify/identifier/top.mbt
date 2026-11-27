@@ -2,12 +2,10 @@
 ///|
 /// How the card is printed (its `printing`). Drives price more than anything except condition: a
 /// reverse holo and a normal copy of one card are different markets.
+#derive(Debug, Eq)
 pub(all) enum VariantKind {
       NORMAL; HOLO; REVERSE_HOLO; FIRST_EDITION; SHADOWLESS; SPECIAL
-} derive(Show, Eq)
-///|
-#deprecated
-pub extend VariantKind with Show::{to_string, output}
+}
 
 ///|
 #deprecated
@@ -39,12 +37,10 @@ pub fn VariantKind::from(self : Int) -> VariantKind {
 }
 ///|
 /// Condition, on the scale the singles market uses.
+#derive(Debug, Eq)
 pub(all) enum Condition {
       MINT; NEAR_MINT; LIGHTLY_PLAYED; MODERATELY_PLAYED; HEAVILY_PLAYED; DAMAGED
-} derive(Show, Eq)
-///|
-#deprecated
-pub extend Condition with Show::{to_string, output}
+}
 
 ///|
 #deprecated
@@ -76,12 +72,10 @@ pub fn Condition::from(self : Int) -> Condition {
 }
 ///|
 /// A professional grade, when the card is in a slab.
+#derive(Debug, Eq)
 pub(all) struct Grade {
       grader : String; tenths : UInt
-} derive(Show, Eq)
-///|
-#deprecated
-pub extend Grade with Show::{to_string, output}
+}
 
 ///|
 #deprecated
@@ -94,12 +88,10 @@ pub extend Grade with Eq::{not_equal, equal}
 /// sentinel and no default: a collection where three hundred cards silently say
 /// "Near Mint" is worth an unknown amount of money, and no screen will ever show
 /// you which three hundred.
+#derive(Debug, Eq)
 pub(all) struct Guess {
       name : String; set_name : String; set_code : String; number : String; rarity : String; language : String; printing : VariantKind?; condition : Condition?; graded : Grade?; confidence : Byte; needs_review : Array[String]
-} derive(Show, Eq)
-///|
-#deprecated
-pub extend Guess with Show::{to_string, output}
+}
 
 ///|
 #deprecated
@@ -108,16 +100,14 @@ pub extend Guess with Eq::{not_equal, equal}
 ///|
 /// Why no guess could be made. Refusing IS a valid answer — the blank-card row
 /// is how a collection quietly fills with garbage nobody deletes.
+#derive(Debug, Eq)
 pub(all) suberror IdentifyError {
       NoCard(String)
       MoreThanOneCard
       Refused(String)
       Unparseable(String)
       NoName
-} derive(Show, Eq)
-///|
-#deprecated
-pub extend IdentifyError with Show::{to_string, output}
+}
 
 ///|
 #deprecated

@@ -3,7 +3,7 @@
 let hex_upper : Array[Char] = "0123456789ABCDEF".to_array()
 
 pub fn sanitize(s : String) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   for i = 0; i < s.length(); i = i + 1 {
     let code = s[i].to_int()
     let c = (code & 0xFF).unsafe_to_char()
@@ -34,7 +34,7 @@ fn hex_val(code : Int) -> Int? {
 }
 
 pub fn unsanitize(s : String) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   let len = s.length()
   let mut i = 0
   while i < len {
@@ -85,7 +85,7 @@ pub fn str_to_bytes(s : String) -> FixedArray[Byte] {
 }
 
 pub fn bytes_to_str(bytes : FixedArray[Byte]) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   for i = 0; i < bytes.length(); i = i + 1 {
     buf.write_char((bytes[i].to_int() & 0xFF).unsafe_to_char())
   }
@@ -93,7 +93,7 @@ pub fn bytes_to_str(bytes : FixedArray[Byte]) -> String {
 }
 
 pub fn variants_to_bytes(variants : Array[(String, UInt)]) -> FixedArray[Byte] {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   for i = 0; i < variants.length(); i = i + 1 {
     if i > 0 {
       buf.write_char(',')

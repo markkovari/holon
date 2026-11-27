@@ -2,6 +2,6 @@ import {
   "holon/text-stats/async-core",
 }
 
-warnings = "-44"
+warnings = "-44-1"
 
 supported_targets = "wasm"

@@ -47,7 +47,7 @@ fn str_to_bytes(s : String) -> FixedArray[Byte] {
 }
 
 fn bytes_to_str(bytes : FixedArray[Byte]) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   for i = 0; i < bytes.length(); i = i + 1 {
     buf.write_char((bytes[i].to_int() & 0xFF).unsafe_to_char())
   }
@@ -55,7 +55,7 @@ fn bytes_to_str(bytes : FixedArray[Byte]) -> String {
 }
 
 fn b64url_encode(bytes : FixedArray[Byte]) -> String {
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   let mut i = 0
   while i < bytes.length() {
     let remaining = bytes.length() - i
@@ -303,7 +303,7 @@ fn hmac_sha256(key : FixedArray[Byte], data : FixedArray[Byte]) -> FixedArray[By
 
 fn to_hex_8(bytes : FixedArray[Byte]) -> String {
   let digits = "0123456789abcdef".to_array()
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   for i = 0; i < 8; i = i + 1 {
     let b = bytes[i].to_int() & 0xFF
     out.write_char(digits[(b >> 4) & 0x0F])

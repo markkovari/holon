@@ -51,7 +51,7 @@ pub fn encode(bytes : FixedArray[Byte], alphabet : Alphabet) -> String {
     STANDARD => true
     URL_SAFE => false
   }
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   let mut i = 0
   while i < bytes.length() {
     let remaining = bytes.length() - i
@@ -105,7 +105,7 @@ pub fn decode(
     return Err(MisplacedPadding(pad_start.reinterpret_as_uint()))
   }
 
-  let values = Array::new()
+  let values = Array()
   for i = 0; i < pad_start; i = i + 1 {
     let v = char_value(chars[i], alphabet)
     if v < 0 {
@@ -122,7 +122,7 @@ pub fn decode(
     return Err(TruncatedGroup(chars.length().reinterpret_as_uint()))
   }
 
-  let out = Array::new()
+  let out = Array()
   let mut i = 0
   while i + 4 <= values.length() {
     let n = (values[i] << 18) |
@@ -149,7 +149,7 @@ pub fn decode(
 ///|
 pub fn to_hex(bytes : FixedArray[Byte]) -> String {
   let digits = "0123456789abcdef".to_array()
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   for i = 0; i < bytes.length(); i = i + 1 {
     let b = bytes[i].to_int()
     out.write_char(digits[(b >> 4) & 0x0F])
@@ -161,7 +161,7 @@ pub fn to_hex(bytes : FixedArray[Byte]) -> String {
 ///|
 pub fn from_hex(text : String) -> Result[FixedArray[Byte], DecodeError] {
   let chars = text.to_array()
-  let values = Array::new()
+  let values = Array()
   for i = 0; i < chars.length(); i = i + 1 {
     let c = chars[i]
     let n = c.to_int()
@@ -184,7 +184,7 @@ pub fn from_hex(text : String) -> Result[FixedArray[Byte], DecodeError] {
   if values.length() % 2 != 0 {
     return Err(TruncatedGroup(values.length().reinterpret_as_uint()))
   }
-  let out = Array::new()
+  let out = Array()
   let mut i = 0
   while i < values.length() {
     out.push((((values[i] << 4) | values[i + 1]) & 0xFF).to_byte())

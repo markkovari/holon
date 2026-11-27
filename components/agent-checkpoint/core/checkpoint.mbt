@@ -141,7 +141,7 @@ pub fn sha256_bytes(data : FixedArray[Byte]) -> FixedArray[Byte] {
 
 pub fn to_hex(bytes : FixedArray[Byte]) -> String {
   let digits = "0123456789abcdef".to_array()
-  let out = StringBuilder::new()
+  let out = StringBuilder()
   for i = 0; i < bytes.length(); i = i + 1 {
     let b = bytes[i].to_int() & 0xFF
     out.write_char(digits[(b >> 4) & 0x0F])

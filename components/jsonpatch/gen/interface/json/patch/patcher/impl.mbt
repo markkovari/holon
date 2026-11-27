@@ -71,7 +71,7 @@ fn parse_pointer(path : String) -> Result[Array[String], PatchError] {
 }
 
 ///|
-fn parse_index(tok : String, len : Int) -> Result[Int, PatchError] {
+fn parse_index(tok : String, _len : Int) -> Result[Int, PatchError] {
   if tok == "0" {
     return Ok(0)
   }

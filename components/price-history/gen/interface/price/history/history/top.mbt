@@ -3,12 +3,10 @@
 /// Which number a source was asked for. A market price and a lowest listing are
 /// different questions, one systematically below the other, and a series that
 /// mixes them is answering neither.
+#derive(Debug)
 pub(all) enum QuoteKind {
       MARKET; LOW; HIGH; LAST_SOLD
-} derive(Show)
-///|
-#deprecated
-pub extend QuoteKind with Show::{to_string, output}
+}
 
 ///|
 pub fn QuoteKind::ordinal(self : QuoteKind) -> Int {
@@ -32,41 +30,33 @@ pub fn QuoteKind::from(self : Int) -> QuoteKind {
 }
 ///|
 /// One observation of a price.
+#derive(Debug)
 pub(all) struct Quote {
       unit_minor : Int64; currency : String; kind : QuoteKind; source : String; at : UInt64
-} derive(Show)
-///|
-#deprecated
-pub extend Quote with Show::{to_string, output}
+}
 
 ///|
 /// A price at an instant, and how much to trust it.
+#derive(Debug)
 pub(all) struct Observed {
       unit_minor : Int64; currency : String; source : String; observed_at : UInt64; age_seconds : UInt64; carried : Bool
-} derive(Show)
-///|
-#deprecated
-pub extend Observed with Show::{to_string, output}
+}
 
 ///|
 /// One sample on a price chart.
+#derive(Debug)
 pub(all) struct Point {
       at : UInt64; unit_minor : Int64; carried : Bool
-} derive(Show)
-///|
-#deprecated
-pub extend Point with Show::{to_string, output}
+}
 
 ///|
 /// Why a lookup produced nothing.
+#derive(Debug)
 pub(all) suberror PriceError {
       NotYetPriced
       MixedCurrency((String, String))
       ZeroStep
-} derive(Show)
-///|
-#deprecated
-pub extend PriceError with Show::{to_string, output}
+}
 
 ///|
 /// The latest quote of `kind` at or before `at`, carried forward if older.

@@ -2,22 +2,18 @@
 ///|
 /// One line of text. Blocks flow top-to-bottom; the writer starts a new
 /// page when the next block won't fit.
+#derive(Debug)
 pub(all) struct Block {
       text : String; size : UInt; bold : Bool; gap_before : UInt
-} derive(Show)
-///|
-#deprecated
-pub extend Block with Show::{to_string, output}
+}
 
 ///|
 /// A logical document: a title (rendered large at the top of page 1) and
 /// the body blocks.
+#derive(Debug)
 pub(all) struct Document {
       title : String; blocks : Array[Block]
-} derive(Show)
-///|
-#deprecated
-pub extend Document with Show::{to_string, output}
+}
 
 ///|
 /// Render the document to a complete PDF 1.4 file.
