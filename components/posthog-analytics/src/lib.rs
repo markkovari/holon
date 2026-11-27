@@ -21,7 +21,7 @@ mod bindings {
             "../../wit/deps/wasi-http-0.2.0",
             "../../wit/deps/wasi-config-0.2.0-rc.1",
             "../../host/wit/deps/comp-secrets",
-            "../../wit/analytics.wit",
+            "../../wit/analytics-telemetry",
             "wit",
         ],
         world: "posthog:analytics/posthog-analytics",

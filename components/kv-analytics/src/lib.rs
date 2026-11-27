@@ -13,7 +13,7 @@ mod bindings {
             "../../wit/deps/wasi-clocks-0.2.0",
             "../../wit/deps/wasi-keyvalue-0.2.0-draft",
             "../metrics-collect/wit",
-            "../../wit/analytics.wit",
+            "../../wit/analytics-telemetry",
             "wit",
         ],
         world: "kv:analytics/kv-analytics",

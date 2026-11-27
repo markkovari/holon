@@ -14,7 +14,7 @@ mod bindings {
             "../../wit/deps/wasi-random-0.2.0",
             "../../wit/deps/wasi-cli-0.2.0",
             "../../wit/deps/wasi-http-0.2.0",
-            "../../wit/analytics.wit",
+            "../../wit/analytics-telemetry",
             "../clinic-triage/wit",
             "../id-generate/wit",
             "wit",
