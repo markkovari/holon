@@ -68,6 +68,15 @@ world vet-domain {
     // decouples "appointment booked" from its reactions (audit/search/notify).
     import event:bus/bus@0.1.0;
 
+    // vaccination booster schedules + RFC 5545 .ics calendar export.
+    import rrule:recur/recur@0.1.0;
+    import ical:codec/codec@0.1.0;
+    // printable PDF vaccination certificates & invoices + scannable QR codes.
+    import pdf:codec/codec@0.1.0;
+    import qr:encode/encoder@0.1.0;
+    // server-side SVG trend charts for pet weight & vitals.
+    import svg:chart/charts@0.1.0;
+
     // the built SPA lives in its own component so this artifact stays slim —
     // per-request instantiation cost tracks component size on wasmCloud.
     import ui:assets/files@0.1.0;
