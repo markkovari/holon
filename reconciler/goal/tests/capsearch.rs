@@ -144,6 +144,20 @@ const DELIBERATE: &[(&str, &str)] = &[
         "agent tools implement this interface (ADR-0125) to expose callable capabilities \
          (e.g. gcal, text-stats-mbt, and forged tools) to the agent runtime.",
     ),
+    (
+        "analytics:telemetry/types",
+        "swappable analytics backend boundary: `kv-analytics` stores metrics locally in \
+         wasi:keyvalue while `posthog-analytics` forwards events to PostHog; apps swap \
+         implementations at composition time without code changes.",
+    ),
+    (
+        "analytics:telemetry/tracker",
+        "swappable analytics backend boundary (`kv-analytics` vs `posthog-analytics`).",
+    ),
+    (
+        "analytics:telemetry/query",
+        "swappable analytics backend boundary (`kv-analytics` vs `posthog-analytics`).",
+    ),
 ];
 
 /// A working search and a broken one look identical from outside, so count what got through.

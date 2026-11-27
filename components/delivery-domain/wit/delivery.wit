@@ -9,7 +9,7 @@
 package delivery:app@0.1.0;
 
 world delivery-domain {
-    export wasi:http/handler@0.3.0-rc-2026-03-15;
+    export wasi:http/handler@0.3.0;
     export delivery:sdlc/router@0.1.0;
 
     // Durable deliverable records and per-project release policies.
@@ -28,6 +28,6 @@ world delivery-domain {
     // Dashboard UI assets (`delivery-assets`).
     import ui:assets/files@0.1.0;
     // Timestamps and SSE poll cadence.
-    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
-    import wasi:clocks/monotonic-clock@0.3.0-rc-2026-03-15;
+    import wasi:clocks/system-clock@0.3.0;
+    import wasi:clocks/monotonic-clock@0.3.0;
 }
