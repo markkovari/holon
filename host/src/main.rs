@@ -1544,8 +1544,17 @@ fn wasi_ctx(scope: &SharedScope) -> WasiCtx {
     b.socket_addr_check(move |addr, used| {
         let policy = policy.clone();
         Box::pin(async move {
-            matches!(used, wasmtime_wasi::sockets::SocketAddrUse::TcpConnect)
-                && policy.socket_allowed(addr).await
+            match used {
+                wasmtime_wasi::sockets::SocketAddrUse::TcpConnect => {
+                    policy.socket_allowed(addr).await
+                }
+                // wasmtime 50 checks an implicit ephemeral bind (`0.0.0.0:0` / `[::]:0`) before
+                // `TcpConnect`; allow that placeholder while still denying `TcpListen`/`TcpAccept`.
+                wasmtime_wasi::sockets::SocketAddrUse::TcpBind => {
+                    addr.ip().is_unspecified() && addr.port() == 0
+                }
+                _ => false,
+            }
         })
     });
     b.build()
